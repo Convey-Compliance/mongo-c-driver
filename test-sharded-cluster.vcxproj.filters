@@ -1,0 +1,211 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="tests\test-sharded-cluster.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\mongoc-tests.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\ha-test.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-write-concern.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-array.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-buffer.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-bulk-operation.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-client-pool.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-client.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-cluster.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-collection.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-counters.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-cursor-array.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-cursor-cursorid.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-cursor.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-database.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-gridfs-file-list.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-gridfs-file-page.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-gridfs-file.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-gridfs.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-index.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-init.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-list.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-log.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-matcher-op.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-matcher.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-queue.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-read-prefs.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-rpc.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-socket.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-stream-buffered.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-stream-file.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-stream-gridfs.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-stream-socket.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-stream.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-uri.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-util.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="src\mongoc\mongoc-write-command.c">
+      <Filter>Source Files\libmongoc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\bson\bcon.c">
+      <Filter>Source Files\libmongoc\libbson</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\bson\bson-atomic.c">
+      <Filter>Source Files\libmongoc\libbson</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\bson\bson-clock.c">
+      <Filter>Source Files\libmongoc\libbson</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\bson\bson-context.c">
+      <Filter>Source Files\libmongoc\libbson</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\bson\bson-error.c">
+      <Filter>Source Files\libmongoc\libbson</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\bson\bson-iter.c">
+      <Filter>Source Files\libmongoc\libbson</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\bson\bson-json.c">
+      <Filter>Source Files\libmongoc\libbson</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\bson\bson-keys.c">
+      <Filter>Source Files\libmongoc\libbson</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\bson\bson-md5.c">
+      <Filter>Source Files\libmongoc\libbson</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\bson\bson-memory.c">
+      <Filter>Source Files\libmongoc\libbson</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\bson\bson-oid.c">
+      <Filter>Source Files\libmongoc\libbson</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\bson\bson-reader.c">
+      <Filter>Source Files\libmongoc\libbson</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\bson\bson-string.c">
+      <Filter>Source Files\libmongoc\libbson</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\bson\bson-utf8.c">
+      <Filter>Source Files\libmongoc\libbson</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\bson\bson-value.c">
+      <Filter>Source Files\libmongoc\libbson</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\bson\bson-writer.c">
+      <Filter>Source Files\libmongoc\libbson</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\bson\bson.c">
+      <Filter>Source Files\libmongoc\libbson</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\yajl\yajl.c">
+      <Filter>Source Files\libmongoc\libbson\yajl</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\yajl\yajl_alloc.c">
+      <Filter>Source Files\libmongoc\libbson\yajl</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\yajl\yajl_buf.c">
+      <Filter>Source Files\libmongoc\libbson\yajl</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\yajl\yajl_encode.c">
+      <Filter>Source Files\libmongoc\libbson\yajl</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\yajl\yajl_gen.c">
+      <Filter>Source Files\libmongoc\libbson\yajl</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\yajl\yajl_lex.c">
+      <Filter>Source Files\libmongoc\libbson\yajl</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\yajl\yajl_parser.c">
+      <Filter>Source Files\libmongoc\libbson\yajl</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\yajl\yajl_tree.c">
+      <Filter>Source Files\libmongoc\libbson\yajl</Filter>
+    </ClCompile>
+    <ClCompile Include="..\libbson\src\yajl\yajl_version.c">
+      <Filter>Source Files\libmongoc\libbson\yajl</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{7B8908A5-1D5A-4E49-9D21-C6FC0FEC6C28}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\libmongoc">
+      <UniqueIdentifier>{19ffb640-bfec-4252-8d52-ec20f215e4e3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\libmongoc\libbson">
+      <UniqueIdentifier>{906c3ff2-0744-4d19-8db2-4ca79676662f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\libmongoc\libbson\yajl">
+      <UniqueIdentifier>{5bbff12a-6f37-4aa6-a9d8-3c6b282369fa}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
