@@ -12,14 +12,27 @@ endif
 TEST_PROGS = test-libmongoc
 
 
-TEST_CFLAGS = \
+TEST_CFLAGS =
+
+if OS_SOLARIS
+TEST_CFLAGS += -D_REENTRANT
+endif
+
+TEST_CFLAGS += \
 	-DMONGOC_COMPILATION \
 	-DBINARY_DIR="\"$(srcdir)/tests/binary\"" \
 	$(BSON_CFLAGS) \
+	$(SSL_CFLAGS) \
+	$(SASL_CFLAGS) \
 	-I$(top_srcdir)/src/mongoc \
 	-I$(top_builddir)/src/mongoc
 
-TEST_LIBS = libmongoc-priv.la $(SHM_LIB)
+TEST_LIBS = \
+	libmongoc-priv.la \
+	$(PTHREAD_LIBS) \
+	$(SHM_LIB) \
+	$(SASL_LIBS) \
+	$(SSL_LIBS)
 if EXPLICIT_LIBS
 TEST_LIBS += $(BSON_LIBS)
 endif
@@ -111,7 +124,7 @@ test_sharded_cluster_LDADD = $(TEST_LIBS)
 test_certs: tests/trust_dir/done
 
 tests/trust_dir/done: $(top_srcdir)/tests/make_ca.pl $(top_srcdir)/tests/trust_dir.cnf
-	$< $(top_builddir)/tests/trust_dir $(top_srcdir)/tests/trust_dir.cnf
+	PATH=tests:${PATH} $(top_srcdir)/tests/make_ca.pl $(top_builddir)/tests/trust_dir $(top_srcdir)/tests/trust_dir.cnf
 	touch $(top_builddir)/tests/trust_dir/done
 
 libbson_check:
@@ -138,6 +151,9 @@ abicheck:
 else
 abicheck:
 endif
+
+# TODO: run tests that do not need to talk to a server
+local-check:
 
 DISTCLEANFILES += \
 	test.log \
@@ -206,7 +222,8 @@ EXTRA_DIST += \
 	tests/mongoc-tests.c \
 	tests/mongoc-tests.h \
 	tests/trust_dir.cnf \
-	tests/make_ca.pl
+	tests/make_ca.pl \
+	tests/c_rehash
 
 debug: test-libmongoc
 	$(LIBTOOL) --mode=execute gdb --args test-libmongoc -f -p

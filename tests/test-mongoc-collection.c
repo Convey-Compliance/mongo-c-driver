@@ -1,5 +1,6 @@
 #include <bcon.h>
 #include <mongoc.h>
+#include <mongoc-client-private.h>
 
 #include "TestSuite.h"
 
@@ -157,18 +158,31 @@ test_insert_bulk (void)
 
    BEGIN_IGNORE_DEPRECATIONS;
    r = mongoc_collection_insert_bulk (collection, MONGOC_INSERT_NONE,
-                                     (const bson_t **)bptr, 10, NULL, &error);
+                                      (const bson_t **)bptr, 10, NULL, &error);
    END_IGNORE_DEPRECATIONS;
 
    ASSERT (!r);
    ASSERT (error.code == 11000);
 
    count = mongoc_collection_count (collection, MONGOC_QUERY_NONE, &q, 0, 0, NULL, &error);
-   ASSERT (count == 5);
+
+   /*
+    * MongoDB <2.6 and 2.6 will return different values for this. This is a
+    * primary reason that mongoc_collection_insert_bulk() is deprecated.
+    * Instead, you should use the new bulk api which will hide the differences
+    * for you.  However, since the new bulk API is slower on 2.4 when write
+    * concern is needed for inserts, we will support this for a while, albeit
+    * deprecated.
+    */
+   if (client->cluster.nodes [0].max_wire_version == 0) {
+      ASSERT (count == 6);
+   } else {
+      ASSERT (count == 5);
+   }
 
    BEGIN_IGNORE_DEPRECATIONS;
    r = mongoc_collection_insert_bulk (collection, MONGOC_INSERT_CONTINUE_ON_ERROR,
-                                     (const bson_t **)bptr, 10, NULL, &error);
+                                      (const bson_t **)bptr, 10, NULL, &error);
    END_IGNORE_DEPRECATIONS;
    ASSERT (!r);
    ASSERT (error.code == 11000);
@@ -392,7 +406,7 @@ test_update (void)
 
 
 static void
-test_delete (void)
+test_remove (void)
 {
    mongoc_collection_t *collection;
    mongoc_database_t *database;
@@ -410,7 +424,7 @@ test_delete (void)
    database = get_test_database (client);
    ASSERT (database);
 
-   collection = get_test_collection (client, "test_delete");
+   collection = get_test_collection (client, "test_remove");
    ASSERT (collection);
 
    context = bson_context_new(BSON_CONTEXT_NONE);
@@ -431,7 +445,7 @@ test_delete (void)
 
       bson_init(&b);
       bson_append_oid(&b, "_id", 3, &oid);
-      r = mongoc_collection_delete(collection, MONGOC_DELETE_NONE, &b, NULL,
+      r = mongoc_collection_remove(collection, MONGOC_REMOVE_NONE, &b, NULL,
                                    &error);
       if (!r) {
          MONGOC_WARNING("%s\n", error.message);
@@ -568,22 +582,17 @@ test_aggregate (void)
    mongoc_cursor_t *cursor;
    const bson_t *doc;
    bson_error_t error;
+   bool did_alternate = false;
    bool r;
-   bson_t b;
    bson_t opts;
-   bson_t match;
-   bson_t pipeline;
+   bson_t *pipeline;
+   bson_t *b;
    bson_iter_t iter;
    int i;
 
-   bson_init(&b);
-   bson_append_utf8(&b, "hello", -1, "world", -1);
+   pipeline = BCON_NEW ("pipeline", "[", "{", "$match", "{", "hello", BCON_UTF8 ("world"), "}", "}", "]");
 
-   bson_init(&match);
-   bson_append_document(&match, "$match", -1, &b);
-
-   bson_init(&pipeline);
-   bson_append_document(&pipeline, "0", -1, &match);
+again:
 
    client = mongoc_client_new(gTestUri);
    ASSERT (client);
@@ -596,42 +605,48 @@ test_aggregate (void)
 
    mongoc_collection_drop(collection, &error);
 
-   r = mongoc_collection_insert(collection, MONGOC_INSERT_NONE, &b, NULL, &error);
-   ASSERT (r);
+   b = BCON_NEW ("hello", BCON_UTF8 ("world"));
+
+   for (i = 0; i < 2; i++) {
+      r = mongoc_collection_insert(collection, MONGOC_INSERT_NONE, b, NULL, &error);
+      ASSERT (r);
+   }
 
    for (i = 0; i < 2; i++) {
       if (i % 2 == 0) {
-         cursor = mongoc_collection_aggregate(collection, MONGOC_QUERY_NONE, &pipeline, NULL, NULL);
+         cursor = mongoc_collection_aggregate(collection, MONGOC_QUERY_NONE, pipeline, NULL, NULL);
          ASSERT (cursor);
       } else {
          bson_init (&opts);
          BSON_APPEND_INT32 (&opts, "batchSize", 10);
          BSON_APPEND_BOOL (&opts, "allowDiskUse", true);
 
-         cursor = mongoc_collection_aggregate(collection, MONGOC_QUERY_NONE, &pipeline, &opts, NULL);
+         cursor = mongoc_collection_aggregate(collection, MONGOC_QUERY_NONE, pipeline, &opts, NULL);
          ASSERT (cursor);
 
          bson_destroy (&opts);
       }
 
-      /*
-       * This can fail if we are connecting to a 2.0 MongoDB instance.
-       */
-      r = mongoc_cursor_next(cursor, &doc);
-      if (mongoc_cursor_error(cursor, &error)) {
-         if ((error.domain == MONGOC_ERROR_QUERY) &&
-             (error.code == MONGOC_ERROR_QUERY_COMMAND_NOT_FOUND)) {
-            mongoc_cursor_destroy (cursor);
-            break;
+      for (i = 0; i < 2; i++) {
+         /*
+          * This can fail if we are connecting to a 2.0 MongoDB instance.
+          */
+         r = mongoc_cursor_next(cursor, &doc);
+         if (mongoc_cursor_error(cursor, &error)) {
+            if ((error.domain == MONGOC_ERROR_QUERY) &&
+                (error.code == MONGOC_ERROR_QUERY_COMMAND_NOT_FOUND)) {
+               mongoc_cursor_destroy (cursor);
+               break;
+            }
+            MONGOC_WARNING("[%d.%d] %s", error.domain, error.code, error.message);
          }
-         MONGOC_WARNING("[%d.%d] %s", error.domain, error.code, error.message);
+
+         ASSERT (r);
+         ASSERT (doc);
+
+         ASSERT (bson_iter_init_find (&iter, doc, "hello") &&
+                 BSON_ITER_HOLDS_UTF8 (&iter));
       }
-
-      ASSERT (r);
-      ASSERT (doc);
-
-      ASSERT (bson_iter_init_find (&iter, doc, "hello") &&
-              BSON_ITER_HOLDS_UTF8 (&iter));
 
       r = mongoc_cursor_next(cursor, &doc);
       if (mongoc_cursor_error(cursor, &error)) {
@@ -643,15 +658,21 @@ test_aggregate (void)
       mongoc_cursor_destroy(cursor);
    }
 
+   if (!did_alternate) {
+      did_alternate = true;
+      bson_destroy (pipeline);
+      pipeline = BCON_NEW ("0", "{", "$match", "{", "hello", BCON_UTF8 ("world"), "}", "}");
+      goto again;
+   }
+
    r = mongoc_collection_drop(collection, &error);
    ASSERT (r);
 
    mongoc_collection_destroy(collection);
    mongoc_database_destroy(database);
    mongoc_client_destroy(client);
-   bson_destroy(&b);
-   bson_destroy(&pipeline);
-   bson_destroy(&match);
+   bson_destroy(b);
+   bson_destroy(pipeline);
 }
 
 
@@ -890,6 +911,7 @@ test_large_return (void)
    mongoc_cursor_destroy (cursor);
 
    r = mongoc_collection_drop (collection, &error);
+   if (!r) fprintf (stderr, "ERROR: %s\n", error.message);
    assert (r);
 
    mongoc_collection_destroy (collection);
@@ -909,7 +931,6 @@ test_many_return (void)
    bson_oid_t oid;
    bson_t query = BSON_INITIALIZER;
    bson_t **docs;
-   size_t len;
    bool r;
    int i;
 
@@ -985,7 +1006,7 @@ test_collection_install (TestSuite *suite)
    TestSuite_Add (suite, "/Collection/index", test_index);
    TestSuite_Add (suite, "/Collection/regex", test_regex);
    TestSuite_Add (suite, "/Collection/update", test_update);
-   TestSuite_Add (suite, "/Collection/delete", test_delete);
+   TestSuite_Add (suite, "/Collection/remove", test_remove);
    TestSuite_Add (suite, "/Collection/count", test_count);
    TestSuite_Add (suite, "/Collection/drop", test_drop);
    TestSuite_Add (suite, "/Collection/aggregate", test_aggregate);

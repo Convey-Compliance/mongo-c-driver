@@ -104,7 +104,7 @@ _mongoc_socket_setnonblock (int sd)
  *--------------------------------------------------------------------------
  */
 
-bool
+static bool
 #ifdef _WIN32
 _mongoc_socket_wait (SOCKET   sd,           /* IN */
 #else
@@ -162,7 +162,7 @@ _mongoc_socket_wait (int      sd,           /* IN */
 }
 
 
-bool
+static bool
 #ifdef _WIN32
 _mongoc_socket_setnodelay (SOCKET sd) /* IN */
 #else
@@ -352,7 +352,7 @@ again:
  *       A wrapper around bind().
  *
  * Returns:
- *       true if successful. false if not.
+ *       0 on success, -1 on failure and errno is set.
  *
  * Side effects:
  *       None.
@@ -445,7 +445,7 @@ mongoc_socket_close (mongoc_socket_t *sock) /* IN */
  *       reached by the monotonic clock.
  *
  * Returns:
- *       true if successful, false if not.
+ *       0 if success, otherwise -1 and errno is set.
  *
  * Side effects:
  *       None.
@@ -701,6 +701,8 @@ again:
 
    DUMP_BYTES (recvbuf, (uint8_t *)buf, ret);
 
+   mongoc_counter_streams_ingress_add (ret > 0 ? ret : 0);
+
    RETURN (ret);
 }
 
@@ -800,7 +802,7 @@ mongoc_socket_send (mongoc_socket_t *sock,      /* IN */
  *--------------------------------------------------------------------------
  */
 
-ssize_t
+static ssize_t
 _mongoc_socket_try_sendv_slow (mongoc_socket_t *sock,   /* IN */
                                mongoc_iovec_t  *iov,    /* IN */
                                size_t           iovcnt) /* IN */
