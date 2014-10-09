@@ -617,6 +617,8 @@ _mongoc_cluster_select (mongoc_cluster_t             *cluster,
 {
    mongoc_cluster_node_t *nodes[MONGOC_CLUSTER_MAX_NODES];
    mongoc_read_mode_t read_mode = MONGOC_READ_PRIMARY;
+   int scores[MONGOC_CLUSTER_MAX_NODES];
+   int max_score = 0;
    uint32_t count;
    uint32_t watermark;
    int32_t nearest = -1;
@@ -738,24 +740,49 @@ dispatch:
     *       in the fast path of command dispatching.
     */
 
-#define IS_NEARER_THAN(n, msec) \
-   ((msec < 0 && (n)->ping_avg_msec >= 0) || ((n)->ping_avg_msec < msec))
-
    count = 0;
 
    for (i = 0; i < MONGOC_CLUSTER_MAX_NODES; i++) {
       if (nodes[i]) {
          if (read_prefs) {
             int score = _mongoc_read_prefs_score(read_prefs, nodes[i]);
+            scores[i] = score;
+
             if (score < 0) {
                nodes[i] = NULL;
                continue;
+            } else if (score > max_score) {
+                max_score = score;
             }
+
          }
+         count++;
+      }
+   }
+
+   /*
+    * Filter nodes with score less than highest score.
+    */
+   if (max_score) {
+      for (i = 0; i < MONGOC_CLUSTER_MAX_NODES; i++) {
+         if (nodes[i] && (scores[i] < max_score)) {
+             nodes[i] = NULL;
+             count--;
+         }
+      }
+   }
+
+   /*
+    * Get the nearest node among those which have not been filtered out
+    */
+#define IS_NEARER_THAN(n, msec) \
+   ((msec < 0 && (n)->ping_avg_msec >= 0) || ((n)->ping_avg_msec < msec))
+
+   for (i = 0; i < MONGOC_CLUSTER_MAX_NODES; i++) {
+      if (nodes[i]) {
          if (IS_NEARER_THAN(nodes[i], nearest)) {
             nearest = nodes[i]->ping_avg_msec;
          }
-         count++;
       }
    }
 
@@ -768,11 +795,23 @@ dispatch:
       watermark = nearest + cluster->sec_latency_ms;
       for (i = 0; i < MONGOC_CLUSTER_MAX_NODES; i++) {
          if (nodes[i]) {
-			 if (nodes[i]->ping_avg_msec >(int32_t)watermark) {
+            if (nodes[i]->ping_avg_msec > (int32_t)watermark) {
                nodes[i] = NULL;
+               count--;
             }
          }
       }
+   }
+
+   /*
+    * Mark the error as unable to locate a target node.
+    */
+   if (!count) {
+      bson_set_error (error,
+                      MONGOC_ERROR_CLIENT,
+                      MONGOC_ERROR_CLIENT_NO_ACCEPTABLE_PEER,
+                      "Failed to locate a suitable MongoDB node.");
+      RETURN (NULL);
    }
 
    /*
@@ -872,7 +911,7 @@ _mongoc_cluster_run_command (mongoc_cluster_t      *cluster,
    rpc.query.fields = NULL;
 
    _mongoc_array_init (&ar, sizeof (mongoc_iovec_t));
-   _mongoc_buffer_init (&buffer, NULL, 0, NULL);
+   _mongoc_buffer_init (&buffer, NULL, 0, NULL, NULL);
 
    _mongoc_rpc_gather(&rpc, &ar);
    _mongoc_rpc_swab_to_le(&rpc);
@@ -1078,6 +1117,18 @@ _mongoc_cluster_ismaster (mongoc_cluster_t      *cluster,
       if (bson_iter_init_find(&iter, &reply, "setName") &&
           BSON_ITER_HOLDS_UTF8(&iter)) {
          node->replSet = bson_iter_dup_utf8(&iter, NULL);
+      }
+      if (bson_iter_init_find(&iter, &reply, "tags") &&
+          BSON_ITER_HOLDS_DOCUMENT(&iter)) {
+          bson_t tags;
+          uint32_t len;
+          const uint8_t *data;
+
+          bson_iter_document(&iter, &len, &data);
+
+          if (bson_init_static(&tags, data, len)) {
+              bson_copy_to(&tags, &(node->tags));
+          }
       }
    }
 
@@ -1906,8 +1957,10 @@ _mongoc_cluster_reconnect_replica_set (mongoc_cluster_t *cluster,
       }
 
       if (!node.replSet || !!strcmp (node.replSet, replSet)) {
-         MONGOC_INFO("%s: Got replicaSet \"%s\" expected \"%s\".",
-                     iter->host_and_port, node.replSet, replSet);
+         MONGOC_INFO ("%s: Got replicaSet \"%s\" expected \"%s\".",
+                      iter->host_and_port,
+                      node.replSet ? node.replSet : "(null)",
+                      replSet);
       }
 
       if (node.primary) {
@@ -2148,6 +2201,8 @@ _mongoc_cluster_reconnect_sharded_cluster (mongoc_cluster_t *cluster,
       RETURN (false);
    }
 
+   _mongoc_cluster_update_state (cluster);
+
    RETURN (true);
 }
 
@@ -2176,10 +2231,26 @@ _mongoc_cluster_reconnect (mongoc_cluster_t *cluster,
                            bson_error_t     *error)
 {
    bool ret;
+   int i;
 
    ENTRY;
 
    bson_return_val_if_fail (cluster, false);
+
+   /*
+    * Close any lingering connections.
+    *
+    * TODO: We could be better about reusing connections.
+    */
+   for (i = 0; i < MONGOC_CLUSTER_MAX_NODES; i++) {
+       if (cluster->nodes [i].stream) {
+           mongoc_stream_close (cluster->nodes [i].stream);
+           mongoc_stream_destroy (cluster->nodes [i].stream);
+           cluster->nodes [i].stream = NULL;
+       }
+   }
+
+   _mongoc_cluster_update_state (cluster);
 
    switch (cluster->mode) {
    case MONGOC_CLUSTER_DIRECT:
@@ -2494,7 +2565,7 @@ _mongoc_cluster_sendv (mongoc_cluster_t             *cluster,
          gle.query.collection = cmdname;
          gle.query.skip = 0;
          gle.query.n_return = 1;
-         b = _mongoc_write_concern_freeze((void*)write_concern);
+         b = _mongoc_write_concern_get_gle((void*)write_concern);
          gle.query.query = bson_get_data(b);
          gle.query.fields = NULL;
          _mongoc_rpc_gather(&gle, &cluster->iov);
@@ -2633,7 +2704,7 @@ _mongoc_cluster_try_sendv (mongoc_cluster_t             *cluster,
          gle.query.skip = 0;
          gle.query.n_return = 1;
 
-         b = _mongoc_write_concern_freeze ((void *)write_concern);
+         b = _mongoc_write_concern_get_gle ((void *)write_concern);
 
          gle.query.query = bson_get_data (b);
          gle.query.fields = NULL;
@@ -2745,7 +2816,7 @@ _mongoc_cluster_try_recv (mongoc_cluster_t *cluster,
     */
    memcpy (&msg_len, &buffer->data[buffer->off + pos], 4);
    msg_len = BSON_UINT32_FROM_LE (msg_len);
-   if ((msg_len < 16) || (msg_len > cluster->max_bson_size)) {
+   if ((msg_len < 16) || (msg_len > cluster->max_msg_size)) {
       bson_set_error (error,
                       MONGOC_ERROR_PROTOCOL,
                       MONGOC_ERROR_PROTOCOL_INVALID_REPLY,

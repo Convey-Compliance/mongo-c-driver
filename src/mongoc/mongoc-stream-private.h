@@ -15,6 +15,11 @@
  */
 
 
+#if !defined (MONGOC_I_AM_A_DRIVER) && !defined (MONGOC_COMPILATION)
+#error "Only <mongoc.h> can be included directly."
+#endif
+
+
 #ifndef MONGOC_STREAM_PRIVATE_H
 #define MONGOC_STREAM_PRIVATE_H
 
@@ -31,33 +36,6 @@ BSON_BEGIN_DECLS
 #define MONGOC_STREAM_BUFFERED 3
 #define MONGOC_STREAM_GRIDFS   4
 #define MONGOC_STREAM_TLS      5
-
-
-struct _mongoc_stream_t
-{
-   int              type;
-   void             (*destroy)         (mongoc_stream_t *stream);
-   int              (*close)           (mongoc_stream_t *stream);
-   int              (*flush)           (mongoc_stream_t *stream);
-   ssize_t          (*writev)          (mongoc_stream_t *stream,
-                                        mongoc_iovec_t  *iov,
-                                        size_t           iovcnt,
-                                        int32_t          timeout_msec);
-   ssize_t          (*readv)           (mongoc_stream_t *stream,
-                                        mongoc_iovec_t  *iov,
-                                        size_t           iovcnt,
-                                        size_t           min_bytes,
-                                        int32_t          timeout_msec);
-   int              (*cork)            (mongoc_stream_t *stream);
-   int              (*uncork)          (mongoc_stream_t *stream);
-   int              (*setsockopt)      (mongoc_stream_t *stream,
-                                        int              level,
-                                        int              optname,
-                                        void            *optval,
-                                        socklen_t        optlen);
-   mongoc_stream_t *(*get_base_stream) (mongoc_stream_t *stream);
-
-};
 
 
 BSON_END_DECLS

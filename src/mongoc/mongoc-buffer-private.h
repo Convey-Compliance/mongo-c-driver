@@ -15,6 +15,11 @@
  */
 
 
+#if !defined (MONGOC_I_AM_A_DRIVER) && !defined (MONGOC_COMPILATION)
+#error "Only <mongoc.h> can be included directly."
+#endif
+
+
 #ifndef MONGOC_BUFFER_PRIVATE_H
 #define MONGOC_BUFFER_PRIVATE_H
 
@@ -32,45 +37,42 @@ typedef struct _mongoc_buffer_t mongoc_buffer_t;
 
 struct _mongoc_buffer_t
 {
-   uint8_t       *data;
+   uint8_t            *data;
    size_t              datalen;
    off_t               off;
    size_t              len;
    bson_realloc_func   realloc_func;
+   void               *realloc_data;
 };
 
 
 void
 _mongoc_buffer_init (mongoc_buffer_t   *buffer,
-                     uint8_t      *buf,
+                     uint8_t           *buf,
                      size_t             buflen,
-                     bson_realloc_func  realloc_func)
-   BSON_GNUC_INTERNAL;
+                     bson_realloc_func  realloc_func,
+                     void              *realloc_data);
 
 bool
 _mongoc_buffer_append_from_stream (mongoc_buffer_t *buffer,
                                    mongoc_stream_t *stream,
                                    size_t           size,
                                    int32_t     timeout_msec,
-                                   bson_error_t    *error)
-   BSON_GNUC_INTERNAL;
+                                   bson_error_t    *error);
 
 ssize_t
 _mongoc_buffer_fill (mongoc_buffer_t *buffer,
                      mongoc_stream_t *stream,
                      size_t           min_bytes,
                      int32_t          timeout_msec,
-                     bson_error_t    *error)
-   BSON_GNUC_INTERNAL;
+                     bson_error_t    *error);
 
 void
-_mongoc_buffer_destroy (mongoc_buffer_t *buffer)
-   BSON_GNUC_INTERNAL;
+_mongoc_buffer_destroy (mongoc_buffer_t *buffer);
 
 void
 _mongoc_buffer_clear (mongoc_buffer_t *buffer,
-                      bool      zero)
-   BSON_GNUC_INTERNAL;
+                      bool      zero);
 
 
 BSON_END_DECLS

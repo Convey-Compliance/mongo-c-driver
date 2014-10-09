@@ -15,6 +15,11 @@
  */
 
 
+#if !defined (MONGOC_I_AM_A_DRIVER) && !defined (MONGOC_COMPILATION)
+#error "Only <mongoc.h> can be included directly."
+#endif
+
+
 #ifndef MONGOC_WRITE_COMMAND_PRIVATE_H
 #define MONGOC_WRITE_COMMAND_PRIVATE_H
 
@@ -49,6 +54,7 @@ typedef struct
          bson_t   *documents;
          uint32_t  n_documents;
          uint32_t  n_merged;
+         uint32_t  current_n_documents;
       } insert;
       struct {
          uint8_t   ordered : 1;
@@ -76,6 +82,7 @@ typedef struct
    bson_t       writeConcernErrors;
    bool         failed;
    bson_error_t error;
+   uint32_t     upsert_append_count;
 } mongoc_write_result_t;
 
 

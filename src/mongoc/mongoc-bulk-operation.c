@@ -45,6 +45,20 @@
 
 
 mongoc_bulk_operation_t *
+mongoc_bulk_operation_new (bool ordered)
+{
+   mongoc_bulk_operation_t *bulk;
+
+   bulk = bson_malloc0 (sizeof *bulk);
+   bulk->ordered = ordered;
+
+   _mongoc_array_init (&bulk->commands, sizeof (mongoc_write_command_t));
+
+   return bulk;
+}
+
+
+mongoc_bulk_operation_t *
 _mongoc_bulk_operation_new (mongoc_client_t              *client,        /* IN */
                             const char                   *database,      /* IN */
                             const char                   *collection,    /* IN */
@@ -57,22 +71,13 @@ _mongoc_bulk_operation_new (mongoc_client_t              *client,        /* IN *
    BSON_ASSERT (client);
    BSON_ASSERT (collection);
 
-   bulk = bson_malloc0 (sizeof *bulk);
-
+   bulk = mongoc_bulk_operation_new (ordered);
    bulk->client = client;
    bulk->database = bson_strdup (database);
    bulk->collection = bson_strdup (collection);
-   bulk->ordered = ordered;
    bulk->hint = hint;
    bulk->write_concern = mongoc_write_concern_copy (write_concern);
    bulk->executed = false;
-
-   if (!bulk->write_concern) {
-      bulk->write_concern = mongoc_write_concern_new ();
-   }
-
-   _mongoc_write_result_init (&bulk->result);
-   _mongoc_array_init (&bulk->commands, sizeof (mongoc_write_command_t));
 
    return bulk;
 }
@@ -95,7 +100,10 @@ mongoc_bulk_operation_destroy (mongoc_bulk_operation_t *bulk) /* IN */
       bson_free (bulk->collection);
       mongoc_write_concern_destroy (bulk->write_concern);
       _mongoc_array_destroy (&bulk->commands);
-      _mongoc_write_result_destroy (&bulk->result);
+
+      if (bulk->executed) {
+         _mongoc_write_result_destroy (&bulk->result);
+      }
 
       bson_free (bulk);
    }
@@ -169,7 +177,8 @@ mongoc_bulk_operation_insert (mongoc_bulk_operation_t *bulk,
    }
 
    _mongoc_write_command_init_insert (&command, &document, 1, bulk->ordered,
-                                      false);
+      !_mongoc_write_concern_needs_gle (bulk->write_concern));
+
    _mongoc_array_append_val (&bulk->commands, command);
 
    EXIT;
@@ -262,7 +271,7 @@ mongoc_bulk_operation_update_one (mongoc_bulk_operation_t *bulk,
 }
 
 
-bool
+uint32_t
 mongoc_bulk_operation_execute (mongoc_bulk_operation_t *bulk,  /* IN */
                                bson_t                  *reply, /* OUT */
                                bson_error_t            *error) /* OUT */
@@ -276,18 +285,44 @@ mongoc_bulk_operation_execute (mongoc_bulk_operation_t *bulk,  /* IN */
 
    bson_return_val_if_fail (bulk, false);
 
-   if (bulk->executed) {
-      bson_set_error (error,
-                      MONGOC_ERROR_COMMAND,
-                      MONGOC_ERROR_COMMAND_INVALID_ARG,
-                      "mongoc_bulk_operation_execute() may only be called "
-                      "once for a bulk operation.");
-      return false;
+   if (!bulk->write_concern) {
+      bulk->write_concern = mongoc_write_concern_new ();
    }
+
+   if (bulk->executed) {
+      _mongoc_write_result_destroy (&bulk->result);
+   }
+
+   _mongoc_write_result_init (&bulk->result);
 
    bulk->executed = true;
 
-   bson_init (reply);
+   if (!bulk->client) {
+      bson_set_error (error,
+                      MONGOC_ERROR_COMMAND,
+                      MONGOC_ERROR_COMMAND_INVALID_ARG,
+                      "mongoc_bulk_operation_execute() requires a client "
+                      "and one has not been set.");
+      return false;
+   } else if (!bulk->database) {
+      bson_set_error (error,
+                      MONGOC_ERROR_COMMAND,
+                      MONGOC_ERROR_COMMAND_INVALID_ARG,
+                      "mongoc_bulk_operation_execute() requires a database "
+                      "and one has not been set.");
+      return false;
+   } else if (!bulk->collection) {
+      bson_set_error (error,
+                      MONGOC_ERROR_COMMAND,
+                      MONGOC_ERROR_COMMAND_INVALID_ARG,
+                      "mongoc_bulk_operation_execute() requires a collection "
+                      "and one has not been set.");
+      return false;
+   }
+
+   if (reply) {
+      bson_init (reply);
+   }
 
    if (!bulk->commands.len) {
       bson_set_error (error,
@@ -315,5 +350,70 @@ mongoc_bulk_operation_execute (mongoc_bulk_operation_t *bulk,  /* IN */
 cleanup:
    ret = _mongoc_write_result_complete (&bulk->result, reply, error);
 
-   RETURN (ret);
+   RETURN (ret ? hint : 0);
+}
+
+void
+mongoc_bulk_operation_set_write_concern (mongoc_bulk_operation_t      *bulk,
+                                         const mongoc_write_concern_t *write_concern)
+{
+   bson_return_if_fail (bulk);
+
+   if (bulk->write_concern) {
+      mongoc_write_concern_destroy (bulk->write_concern);
+   }
+
+   if (write_concern) {
+      bulk->write_concern = mongoc_write_concern_copy (write_concern);
+   } else {
+      bulk->write_concern = mongoc_write_concern_new ();
+   }
+}
+
+
+void
+mongoc_bulk_operation_set_database (mongoc_bulk_operation_t *bulk,
+                                    const char              *database)
+{
+   bson_return_if_fail (bulk);
+
+   if (bulk->database) {
+      bson_free (bulk->database);
+   }
+
+   bulk->database = bson_strdup (database);
+}
+
+
+void
+mongoc_bulk_operation_set_collection (mongoc_bulk_operation_t *bulk,
+                                      const char              *collection)
+{
+   bson_return_if_fail (bulk);
+
+   if (bulk->collection) {
+      bson_free (bulk->collection);
+   }
+
+   bulk->collection = bson_strdup (collection);
+}
+
+
+void
+mongoc_bulk_operation_set_client (mongoc_bulk_operation_t *bulk,
+                                  void                    *client)
+{
+   bson_return_if_fail (bulk);
+
+   bulk->client = client;
+}
+
+
+void
+mongoc_bulk_operation_set_hint (mongoc_bulk_operation_t *bulk,
+                                uint32_t                 hint)
+{
+   bson_return_if_fail (bulk);
+
+   bulk->hint = hint;
 }

@@ -26,11 +26,6 @@
 #include "mongoc-uri.h"
 
 
-#ifndef MONGOC_DEFAULT_PORT
-# define MONGOC_DEFAULT_PORT 27017
-#endif
-
-
 #if defined(_WIN32) && !defined(strcasecmp)
 # define strcasecmp _stricmp
 #endif
@@ -167,7 +162,7 @@ static bool
 mongoc_uri_parse_host6 (mongoc_uri_t  *uri,
                         const char    *str)
 {
-   uint16_t port = 27017;
+   uint16_t port = MONGOC_DEFAULT_PORT;
    const char *portstr;
    const char *end_host;
    char *hostname;
@@ -422,11 +417,11 @@ mongoc_uri_parse_option (mongoc_uri_t *uri,
        !strcasecmp(key, "waitqueuemultiple") ||
        !strcasecmp(key, "waitqueuetimeoutms") ||
        !strcasecmp(key, "wtimeoutms")) {
-      v_int = strtol(value, NULL, 10);
+      v_int = (int) strtol (value, NULL, 10);
       bson_append_int32(&uri->options, key, -1, v_int);
    } else if (!strcasecmp(key, "w")) {
       if (*value == '-' || isdigit(*value)) {
-         v_int = strtol (value, NULL, 10);
+         v_int = (int) strtol (value, NULL, 10);
          BSON_APPEND_INT32 (&uri->options, "w", v_int);
       } else if (0 == strcasecmp (value, "majority")) {
          BSON_APPEND_UTF8 (&uri->options, "w", "majority");
@@ -584,6 +579,12 @@ _mongoc_uri_build_write_concern (mongoc_uri_t *uri) /* IN */
    if (bson_iter_init_find_case (&iter, &uri->options, "wtimeoutms") &&
        BSON_ITER_HOLDS_INT32 (&iter)) {
       wtimeoutms = bson_iter_int32 (&iter);
+   }
+
+   if (bson_iter_init_find_case (&iter, &uri->options, "journal") &&
+       BSON_ITER_HOLDS_BOOL (&iter) &&
+       bson_iter_bool (&iter)) {
+      mongoc_write_concern_set_journal (write_concern, true);
    }
 
    if (bson_iter_init_find_case (&iter, &uri->options, "w")) {

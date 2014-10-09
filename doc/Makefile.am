@@ -1,3 +1,5 @@
+EXTRA_DIST += $(wildcard doc/*.page)
+
 if ENABLE_MAN_PAGES
 MAINTAINERCLEANFILES += $(BUILT_MAN_FILES)
 BUILT_MAN_FILES = $(patsubst %.page,%.3,$(wildcard doc/mongoc_*.page))
@@ -20,16 +22,26 @@ man: $(BUILT_MAN_FILES)
 endif
 
 if ENABLE_HTML_DOCS
-html:
+html $(YELP_HTML_FILES):
 	@ $(MKDIR_P) doc/html
 	$(AM_V_GEN)$(YELP_BUILD) html -o doc/html $(wildcard $(top_srcdir)/doc/*.page)
 
-EXTRA_DIST += $(wildcard doc/html/*)
+YELP_HTML_FILES = \
+	doc/html/C.css \
+	doc/html/jquery.js \
+	doc/html/jquery.syntax.brush.clang.js \
+	doc/html/jquery.syntax.core.js \
+	doc/html/jquery.syntax.js \
+	doc/html/jquery.syntax.layout.yelp.js \
+	doc/html/yelp-note-tip.png \
+	doc/html/yelp-note-warning.png \
+	doc/html/yelp-note.png \
+	doc/html/yelp.js
+
+BUILT_HTML_FILES = $(patsubst doc/%.page,doc/html/%.html,$(wildcard doc/*.page))
+EXTRA_DIST += $(BUILT_HTML_FILES)
+EXTRA_DIST += $(YELP_HTML_FILES)
+DISTCLEANFILES += $(wildcard doc/html/*)
 endif
 
 dist-hook: man html
-
-if ENABLE_YELP
-yelpdir = $(prefix)/share/help/C/mongo-c-driver
-yelp_DATA = $(top_srcdir)/doc/*.page
-endif

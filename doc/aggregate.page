@@ -1,6 +1,6 @@
 <page xmlns="http://projectmallard.org/1.0/"
       type="topic"
-      id="aggregation">
+      id="aggregate">
   <info><link xref="index#aggregation" type="guide"/></info>
   <title>Aggregation Framework Examples</title>
 
@@ -11,7 +11,7 @@
   <section id="requirements">
     <title>Requirements</title>
 
-    <p><link href="https://mongodb.org">MongoDB</link>, version 2.2.0 or later. <link href="https://github.com/mongodb/mongo-c-driver">MongoDB C driver</link>, version 0.94.4 or later.</p>
+    <p><link href="https://mongodb.org">MongoDB</link>, version 2.2.0 or later. <link href="https://github.com/mongodb/mongo-c-driver">MongoDB C driver</link>, version 0.96.0 or later.</p>
     <p>Let's check if everything is installed.</p>
     <p>Use the following command to load zips.json data set into mongod instance:</p>
 
@@ -62,35 +62,7 @@ connecting to: test</output>
   <section>
     <title>States with Populations Over 10 Million</title>
     <p>To get all states with a population greater than 10 million, use the following aggregation pipeline:</p>
-    <synopsis><code mime="text/x-csrc"><![CDATA[#include <mongoc.h>
-#include <bcon.h>
-#include <stdio.h>
-
-static void
-print_pipeline (mongoc_collection_t *collection)
-{
-   bson_t *pipeline;
-   mongoc_cursor_t *cursor;
-   const bson_t *doc;
-
-   pipeline = BCON_NEW ("pipeline", "[",
-      "{", "$group", "{", "_id", "$state", "total_pop", "{", "$sum", "$pop", "}", "}", "}",
-      "{", "$match", "{", "total_pop", "{", "$gte", BCON_INT32 (10000000), "}", "}", "}",
-   "]");
-
-   cursor = mongoc_collection_aggregate (collection, MONGOC_QUERY_NONE, pipeline, NULL, NULL);
-
-   while (mongoc_cursor_next (cursor, &doc)) {
-      char *str;
-
-      str = bson_as_json (doc, NULL);
-      printf ("%s\n", str);
-      bson_free (str);
-   }
-
-   mongoc_cursor_destroy (cursor);
-   bson_destroy (pipeline);
-}]]></code></synopsis>
+    <synopsis><code mime="text/x-csrc"><include parse="text" href="../examples/aggregation/aggregation1.c" xmlns="http://www.w3.org/2001/XInclude" /></code></synopsis>
 
     <p>You should see a result like the following:</p>
 
