@@ -18,6 +18,7 @@
 #include <bcon.h>
 #include <stdio.h>
 
+#include "mongoc-bulk-operation.h"
 #include "mongoc-bulk-operation-private.h"
 #include "mongoc-client-private.h"
 #include "mongoc-collection.h"
@@ -166,7 +167,7 @@ _mongoc_collection_new (mongoc_client_t              *client,
    col->collectionlen = (uint32_t)strlen(col->collection);
    col->nslen = (uint32_t)strlen(col->ns);
 
-   _mongoc_buffer_init(&col->buffer, NULL, 0, NULL);
+   _mongoc_buffer_init(&col->buffer, NULL, 0, NULL, NULL);
 
    col->gle = NULL;
 
@@ -267,13 +268,12 @@ mongoc_collection_aggregate (mongoc_collection_t       *collection, /* IN */
 {
    mongoc_cursor_t *cursor;
    bson_iter_t iter;
-   bson_iter_t citer;
    uint32_t max_wire_version = 0;
    uint32_t min_wire_version = 0;
    uint32_t hint;
    bson_t command;
    bson_t child;
-   int32_t batch_size;
+   int32_t batch_size = 0;
    bool did_batch_size = false;
 
    bson_return_val_if_fail (collection, NULL);
@@ -295,9 +295,8 @@ mongoc_collection_aggregate (mongoc_collection_t       *collection, /* IN */
     * items for the pipeline, or {"pipeline": [...]}.
     */
    if (bson_iter_init_find (&iter, pipeline, "pipeline") &&
-       BSON_ITER_HOLDS_ARRAY (&iter) &&
-       bson_iter_recurse (&iter, &citer)) {
-      bson_append_iter (&command, "pipeline", 8, &citer);
+       BSON_ITER_HOLDS_ARRAY (&iter)) {
+      bson_append_iter (&command, "pipeline", 8, &iter);
    } else {
       BSON_APPEND_ARRAY (&command, "pipeline", pipeline);
    }
@@ -315,28 +314,28 @@ mongoc_collection_aggregate (mongoc_collection_t       *collection, /* IN */
                did_batch_size = true;
                batch_size = (int32_t)bson_iter_as_int64 (&iter);
                BSON_APPEND_INT32 (&child, "batchSize", batch_size);
-            } else if (BSON_ITER_IS_KEY (&iter, "allowDiskUse") &&
-                       BSON_ITER_HOLDS_BOOL (&iter)) {
-               BSON_APPEND_BOOL (&child, "allowDiskUse",
-                                 bson_iter_bool (&iter));
-            } else {
-               /*
-                * Just pass it through if we don't know what it is.
-                */
-               bson_append_iter (&child, bson_iter_key (&iter), -1, &iter);
             }
          }
       }
 
       if (!did_batch_size) {
-         BSON_APPEND_INT32 (&child, "batchSize", 0);
+         BSON_APPEND_INT32 (&child, "batchSize", 100);
       }
 
       bson_append_document_end (&command, &child);
    }
 
-   cursor = mongoc_collection_command(collection, flags, 0, 1, 0, &command,
-                                      NULL, read_prefs);
+   if (options && bson_iter_init (&iter, options)) {
+      while (bson_iter_next (&iter)) {
+         if (! (BSON_ITER_IS_KEY (&iter, "batchSize") || BSON_ITER_IS_KEY (&iter, "cursor"))) {
+            bson_append_iter (&command, bson_iter_key (&iter), -1, &iter);
+         }
+      }
+   }
+
+   cursor = mongoc_collection_command (collection, flags, 0, 0, batch_size,
+                                       &command, NULL, read_prefs);
+
    cursor->hint = hint;
 
    if (max_wire_version > 0) {
@@ -463,6 +462,8 @@ mongoc_collection_command (mongoc_collection_t       *collection,
                            const bson_t              *fields,
                            const mongoc_read_prefs_t *read_prefs)
 {
+   char ns[MONGOC_NAMESPACE_MAX];
+
    BSON_ASSERT (collection);
    BSON_ASSERT (query);
 
@@ -472,7 +473,14 @@ mongoc_collection_command (mongoc_collection_t       *collection,
 
    bson_clear (&collection->gle);
 
-   return mongoc_client_command (collection->client, collection->db, flags,
+   if (NULL == strstr (collection->collection, "$cmd")) {
+      bson_snprintf (ns, sizeof ns, "%s", collection->db);
+   } else {
+      bson_snprintf (ns, sizeof ns, "%s.%s",
+                     collection->db, collection->collection);
+   }
+
+   return mongoc_client_command (collection->client, ns, flags,
                                  skip, limit, batch_size, query, fields, read_prefs);
 }
 
@@ -789,7 +797,6 @@ mongoc_collection_create_index (mongoc_collection_t      *collection,
 
    bson_return_val_if_fail (collection, false);
    bson_return_val_if_fail (keys, false);
-   bson_return_val_if_fail (opt, false);
 
    def_opt = mongoc_index_opt_get_default ();
    opt = opt ? opt : def_opt;
@@ -991,6 +998,10 @@ mongoc_collection_insert (mongoc_collection_t          *collection,
    bson_return_val_if_fail (document, false);
 
    bson_clear (&collection->gle);
+
+   if (!write_concern) {
+      write_concern = collection->write_concern;
+   }
 
    if (!(flags & MONGOC_INSERT_NO_VALIDATE)) {
       if (!bson_validate (document,
@@ -1209,11 +1220,15 @@ mongoc_collection_remove (mongoc_collection_t          *collection,
                           const mongoc_write_concern_t *write_concern,
                           bson_error_t                 *error)
 {
-   uint32_t hint;
-   mongoc_rpc_t rpc;
+   mongoc_write_command_t command;
+   mongoc_write_result_t result;
+   bool multi;
+   bool ret;
 
-   bson_return_val_if_fail(collection, false);
-   bson_return_val_if_fail(selector, false);
+   ENTRY;
+
+   bson_return_val_if_fail (collection, false);
+   bson_return_val_if_fail (selector, false);
 
    bson_clear (&collection->gle);
 
@@ -1221,32 +1236,22 @@ mongoc_collection_remove (mongoc_collection_t          *collection,
       write_concern = collection->write_concern;
    }
 
-   if (!_mongoc_client_warm_up (collection->client, error)) {
-      return false;
-   }
+   multi = !(flags & MONGOC_REMOVE_SINGLE_REMOVE);
 
-   rpc.delete.msg_len = 0;
-   rpc.delete.request_id = 0;
-   rpc.delete.response_to = 0;
-   rpc.delete.opcode = MONGOC_OPCODE_DELETE;
-   rpc.delete.zero = 0;
-   rpc.delete.collection = collection->ns;
-   rpc.delete.flags = flags;
-   rpc.delete.selector = bson_get_data(selector);
+   _mongoc_write_result_init (&result);
+   _mongoc_write_command_init_delete (&command, selector, multi, true);
 
-   if (!(hint = _mongoc_client_sendv(collection->client, &rpc, 1, 0,
-                                     write_concern, NULL, error))) {
-      return false;
-   }
+   _mongoc_write_command_execute (&command, collection->client, 0,
+                                  collection->db, collection->collection,
+                                  write_concern, &result);
 
-   if (_mongoc_write_concern_has_gle(write_concern)) {
-      if (!_mongoc_client_recv_gle (collection->client, hint,
-                                    &collection->gle, error)) {
-         return false;
-      }
-   }
+   collection->gle = bson_new ();
+   ret = _mongoc_write_result_complete (&result, collection->gle, error);
 
-   return true;
+   _mongoc_write_result_destroy (&result);
+   _mongoc_write_command_destroy (&command);
+
+   RETURN (ret);
 }
 
 
@@ -1563,11 +1568,11 @@ mongoc_collection_rename (mongoc_collection_t *collection,
 
       bson_snprintf (collection->collection, sizeof collection->collection,
                      "%s", new_name);
-      collection->collectionlen = strlen (collection->collection);
+      collection->collectionlen = (int) strlen (collection->collection);
 
       bson_snprintf (collection->ns, sizeof collection->ns,
                      "%s.%s", collection->db, new_name);
-      collection->nslen = strlen (collection->ns);
+      collection->nslen = (int) strlen (collection->ns);
    }
 
    bson_destroy (&cmd);

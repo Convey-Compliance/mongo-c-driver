@@ -36,8 +36,8 @@
 #define SUPPORTS_WRITE_COMMANDS(n) \
    (((n)->min_wire_version <= 2) && ((n)->max_wire_version >= 2))
 #define WRITE_CONCERN_DOC(wc) \
-   (wc) ? \
-   (_mongoc_write_concern_freeze((mongoc_write_concern_t*)(wc))) : \
+   (wc && _mongoc_write_concern_needs_gle ((wc))) ? \
+   (_mongoc_write_concern_get_bson((mongoc_write_concern_t*)(wc))) : \
    (&gEmptyWriteConcern)
 
 
@@ -53,7 +53,10 @@ typedef void (*mongoc_write_op_t) (mongoc_write_command_t       *command,
 
 static bson_t gEmptyWriteConcern = BSON_INITIALIZER;
 
-
+static int32_t
+_mongoc_write_result_merge_arrays (mongoc_write_result_t *result,
+                                   bson_t                *dest,
+                                   bson_iter_t           *iter);
 void
 _mongoc_write_command_insert_append (mongoc_write_command_t *command,
                                      const bson_t * const   *documents,
@@ -221,7 +224,7 @@ _mongoc_write_command_delete_legacy (mongoc_write_command_t       *command,
       GOTO (cleanup);
    }
 
-   if (_mongoc_write_concern_has_gle (write_concern)) {
+   if (_mongoc_write_concern_needs_gle (write_concern)) {
       if (!_mongoc_client_recv_gle (client, hint, &gle, error)) {
          result->failed = true;
          GOTO (cleanup);
@@ -358,7 +361,7 @@ again:
       GOTO (cleanup);
    }
 
-   if (_mongoc_write_concern_has_gle (write_concern)) {
+   if (_mongoc_write_concern_needs_gle (write_concern)) {
       bson_iter_t citer;
 
       if (!_mongoc_client_recv_gle (client, hint, &gle, error)) {
@@ -379,6 +382,7 @@ again:
 
 cleanup:
    if (gle) {
+      command->u.insert.current_n_documents = i;
       _mongoc_write_result_merge_legacy (result, command, gle);
       bson_destroy (gle);
       gle = NULL;
@@ -458,7 +462,7 @@ _mongoc_write_command_update_legacy (mongoc_write_command_t       *command,
       GOTO (cleanup);
    }
 
-   if (_mongoc_write_concern_has_gle (write_concern)) {
+   if (_mongoc_write_concern_needs_gle (write_concern)) {
       if (!_mongoc_client_recv_gle (client, hint, &gle, error)) {
          result->failed = true;
          GOTO (cleanup);
@@ -505,7 +509,7 @@ _mongoc_write_command_delete (mongoc_write_command_t       *command,
     * a response from the server.
     */
    if ((client->cluster.nodes [hint - 1].min_wire_version == 0) &&
-       !_mongoc_write_concern_has_gle (write_concern)) {
+       !_mongoc_write_concern_needs_gle (write_concern)) {
       _mongoc_write_command_delete_legacy (command, client, hint, database,
                                            collection, write_concern, result,
                                            error);
@@ -578,7 +582,7 @@ _mongoc_write_command_insert (mongoc_write_command_t       *command,
     * a response from the server.
     */
    if ((client->cluster.nodes [hint - 1].min_wire_version == 0) &&
-       !_mongoc_write_concern_has_gle (write_concern)) {
+       !_mongoc_write_concern_needs_gle (write_concern)) {
       _mongoc_write_command_insert_legacy (command, client, hint, database,
                                            collection, write_concern, result,
                                            error);
@@ -651,6 +655,7 @@ again:
       result->failed = true;
    }
 
+   command->u.insert.current_n_documents = i;
    _mongoc_write_result_merge (result, command, &reply);
 
    bson_destroy (&cmd);
@@ -694,7 +699,7 @@ _mongoc_write_command_update (mongoc_write_command_t       *command,
     * a response from the server.
     */
    if ((client->cluster.nodes [hint - 1].min_wire_version == 0) &&
-       !_mongoc_write_concern_has_gle (write_concern)) {
+       !_mongoc_write_concern_needs_gle (write_concern)) {
       _mongoc_write_command_update_legacy (command, client, hint, database,
                                            collection, write_concern, result,
                                            error);
@@ -851,14 +856,22 @@ _mongoc_write_result_append_upsert (mongoc_write_result_t *result,
                                     const bson_value_t    *value)
 {
    bson_t child;
+   const char *keyptr = NULL;
+   char key[12];
+   int len;
 
    BSON_ASSERT (result);
    BSON_ASSERT (value);
 
-   bson_append_document_begin (&result->upserted, "", -1, &child);
+   len = bson_uint32_to_string (result->upsert_append_count, &keyptr, key,
+                                sizeof key);
+
+   bson_append_document_begin (&result->upserted, keyptr, len, &child);
    BSON_APPEND_INT32 (&child, "index", idx);
    BSON_APPEND_VALUE (&child, "_id", value);
    bson_append_document_end (&result->upserted, &child);
+
+   result->upsert_append_count++;
 }
 
 
@@ -868,6 +881,7 @@ _mongoc_write_result_merge_legacy (mongoc_write_result_t  *result, /* IN */
                                    const bson_t           *reply)  /* IN */
 {
    const bson_value_t *value;
+   bson_t holder, write_errors, child;
    bson_iter_t iter;
    bson_iter_t ar;
    bson_iter_t citer;
@@ -901,6 +915,21 @@ _mongoc_write_result_merge_legacy (mongoc_write_result_t  *result, /* IN */
                       code,
                       "%s", err);
       result->failed = true;
+
+      bson_init(&holder);
+      bson_append_array_begin(&holder, "0", 1, &write_errors);
+      bson_append_document_begin(&write_errors, "0", 1, &child);
+      bson_append_int32(&child, "index", 5, 0);
+      bson_append_int32(&child, "code", 4, code);
+      bson_append_utf8(&child, "errmsg", 6, err, -1);
+      bson_append_document_end(&write_errors, &child);
+      bson_append_array_end(&holder, &write_errors);
+      bson_iter_init(&iter, &holder);
+      bson_iter_next(&iter);
+
+      _mongoc_write_result_merge_arrays (result, &result->writeErrors, &iter);
+
+      bson_destroy(&holder);
    }
 
    switch (command->type) {
@@ -933,6 +962,23 @@ _mongoc_write_result_merge_legacy (mongoc_write_result_t  *result, /* IN */
                }
             }
          }
+      } else if ((n == 1) &&
+                 bson_iter_init_find (&iter, reply, "updatedExisting") &&
+                 BSON_ITER_HOLDS_BOOL (&iter) &&
+                 !bson_iter_bool (&iter)) {
+         /*
+          * CDRIVER-372:
+          *
+          * Versions of MongoDB before 2.6 don't return the _id for an
+          * upsert if _id is not an ObjectId.
+          */
+         result->nUpserted += 1;
+         if (bson_iter_init_find (&iter, command->u.update.update, "_id") ||
+             bson_iter_init_find (&iter, command->u.update.selector, "_id")) {
+            value = bson_iter_value (&iter);
+            _mongoc_write_result_append_upsert (result, result->n_commands,
+                                                value);
+         }
       } else {
          result->nMatched += n;
       }
@@ -949,7 +995,7 @@ _mongoc_write_result_merge_legacy (mongoc_write_result_t  *result, /* IN */
       result->offset += 1;
       break;
    case MONGOC_WRITE_COMMAND_INSERT:
-      result->offset += command->u.insert.n_documents;
+      result->offset += command->u.insert.current_n_documents;
       break;
    default:
       break;
@@ -975,7 +1021,11 @@ _mongoc_write_result_merge_arrays (mongoc_write_result_t *result, /* IN */
    bson_iter_t citer;
    int32_t idx;
    int32_t count = 0;
+   int32_t aridx;
    bson_t child;
+   const char *keyptr = NULL;
+   char key[12];
+   int len;
 
    ENTRY;
 
@@ -984,11 +1034,14 @@ _mongoc_write_result_merge_arrays (mongoc_write_result_t *result, /* IN */
    BSON_ASSERT (iter);
    BSON_ASSERT (BSON_ITER_HOLDS_ARRAY (iter));
 
+   aridx = bson_count_keys (dest);
+
    if (bson_iter_recurse (iter, &ar)) {
       while (bson_iter_next (&ar)) {
          if (BSON_ITER_HOLDS_DOCUMENT (&ar) &&
              bson_iter_recurse (&ar, &citer)) {
-            bson_append_document_begin (dest, "", 0, &child);
+            len = bson_uint32_to_string (aridx++, &keyptr, key, sizeof key);
+            bson_append_document_begin (dest, keyptr, len, &child);
             while (bson_iter_next (&citer)) {
                if (BSON_ITER_IS_KEY (&citer, "index")) {
                   idx = bson_iter_int32 (&citer) + result->offset;
@@ -1112,7 +1165,7 @@ _mongoc_write_result_merge (mongoc_write_result_t  *result,  /* IN */
       result->offset += affected;
       break;
    case MONGOC_WRITE_COMMAND_INSERT:
-      result->offset += command->u.insert.n_documents;
+      result->offset += command->u.insert.current_n_documents;
       break;
    default:
       break;

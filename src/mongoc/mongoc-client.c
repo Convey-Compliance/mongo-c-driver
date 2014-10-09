@@ -51,11 +51,6 @@
 #define MONGOC_LOG_DOMAIN "client"
 
 
-#ifndef DEFAULT_CONNECTTIMEOUTMS
-#define DEFAULT_CONNECTTIMEOUTMS (10 * 1000L)
-#endif
-
-
 /*
  *--------------------------------------------------------------------------
  *
@@ -81,10 +76,10 @@ mongoc_client_connect_tcp (const mongoc_uri_t       *uri,
                            const mongoc_host_list_t *host,
                            bson_error_t             *error)
 {
-   mongoc_socket_t *sock;
+   mongoc_socket_t *sock = NULL;
    struct addrinfo hints;
    struct addrinfo *result, *rp;
-   int32_t connecttimeoutms = DEFAULT_CONNECTTIMEOUTMS;
+   int32_t connecttimeoutms = MONGOC_DEFAULT_CONNECTTIMEOUTMS;
    int64_t expire_at;
    const bson_t *options;
    bson_iter_t iter;
@@ -100,7 +95,7 @@ mongoc_client_connect_tcp (const mongoc_uri_t       *uri,
        bson_iter_init_find (&iter, options, "connecttimeoutms") &&
        BSON_ITER_HOLDS_INT32 (&iter)) {
       if (!(connecttimeoutms = bson_iter_int32(&iter))) {
-         connecttimeoutms = DEFAULT_CONNECTTIMEOUTMS;
+         connecttimeoutms = MONGOC_DEFAULT_CONNECTTIMEOUTMS;
       }
    }
 
@@ -118,6 +113,7 @@ mongoc_client_connect_tcp (const mongoc_uri_t       *uri,
    s = getaddrinfo (host->host, portstr, &hints, &result);
 
    if (s != 0) {
+      mongoc_counter_dns_failure_inc ();
       bson_set_error(error,
                      MONGOC_ERROR_STREAM,
                      MONGOC_ERROR_STREAM_NAME_RESOLUTION,
@@ -125,6 +121,8 @@ mongoc_client_connect_tcp (const mongoc_uri_t       *uri,
                      host->host);
       RETURN (NULL);
    }
+
+   mongoc_counter_dns_success_inc ();
 
    for (rp = result; rp; rp = rp->ai_next) {
       /*
@@ -143,6 +141,13 @@ mongoc_client_connect_tcp (const mongoc_uri_t       *uri,
                                       rp->ai_addr,
                                       (socklen_t)rp->ai_addrlen,
                                       expire_at)) {
+         char errmsg_buf[32];
+         const char * errmsg;
+
+         errmsg = bson_strerror_r (mongoc_socket_errno (sock), errmsg_buf, sizeof errmsg_buf);
+         MONGOC_WARNING ("Failed to connect, error: %d, %s\n",
+                         mongoc_socket_errno(sock),
+                         errmsg);
          mongoc_socket_destroy (sock);
          sock = NULL;
          continue;
@@ -155,7 +160,8 @@ mongoc_client_connect_tcp (const mongoc_uri_t       *uri,
       bson_set_error (error,
                       MONGOC_ERROR_STREAM,
                       MONGOC_ERROR_STREAM_CONNECT,
-                      "Failed to connect to target host.");
+                      "Failed to connect to target host: %s",
+                      host->host_and_port);
       freeaddrinfo (result);
       RETURN (NULL);
    }
@@ -306,32 +312,34 @@ mongoc_client_default_stream_initiator (const mongoc_uri_t       *uri,
    }
 
 #ifdef MONGOC_ENABLE_SSL
-   options = mongoc_uri_get_options (uri);
-   mechanism = mongoc_uri_get_auth_mechanism (uri);
+   if (base_stream) {
+      options = mongoc_uri_get_options (uri);
+      mechanism = mongoc_uri_get_auth_mechanism (uri);
 
-   if ((bson_iter_init_find_case (&iter, options, "ssl") &&
-        bson_iter_as_bool (&iter)) ||
-       (mechanism && (0 == strcmp (mechanism, "MONGODB-X509")))) {
-      base_stream = mongoc_stream_tls_new (base_stream, &client->ssl_opts,
-                                           true);
+      if ((bson_iter_init_find_case (&iter, options, "ssl") &&
+           bson_iter_as_bool (&iter)) ||
+          (mechanism && (0 == strcmp (mechanism, "MONGODB-X509")))) {
+         base_stream = mongoc_stream_tls_new (base_stream, &client->ssl_opts,
+                                              true);
 
-      if (!base_stream) {
-         bson_set_error (error,
-                         MONGOC_ERROR_STREAM,
-                         MONGOC_ERROR_STREAM_SOCKET,
-                         "Failed initialize TLS state.");
-         return NULL;
-      }
+         if (!base_stream) {
+            bson_set_error (error,
+                            MONGOC_ERROR_STREAM,
+                            MONGOC_ERROR_STREAM_SOCKET,
+                            "Failed initialize TLS state.");
+            return NULL;
+         }
 
-      if (!mongoc_stream_tls_do_handshake (base_stream, -1) ||
-          !mongoc_stream_tls_check_cert (base_stream, host->host)) {
-         bson_set_error (error,
-                         MONGOC_ERROR_STREAM,
-                         MONGOC_ERROR_STREAM_SOCKET,
-                         "Failed to handshake and validate TLS certificate.");
-         mongoc_stream_destroy (base_stream);
-         base_stream = NULL;
-         return NULL;
+         if (!mongoc_stream_tls_do_handshake (base_stream, -1) ||
+             !mongoc_stream_tls_check_cert (base_stream, host->host)) {
+            bson_set_error (error,
+                            MONGOC_ERROR_STREAM,
+                            MONGOC_ERROR_STREAM_SOCKET,
+                            "Failed to handshake and validate TLS certificate.");
+            mongoc_stream_destroy (base_stream);
+            base_stream = NULL;
+            return NULL;
+         }
       }
    }
 #endif
@@ -593,7 +601,7 @@ _mongoc_client_recv_gle (mongoc_client_t  *client,
       *gle_doc = NULL;
    }
 
-   _mongoc_buffer_init (&buffer, NULL, 0, NULL);
+   _mongoc_buffer_init (&buffer, NULL, 0, NULL, NULL);
 
    if (!_mongoc_cluster_try_recv (&client->cluster, &rpc, &buffer,
                                   hint, error)) {
@@ -664,10 +672,12 @@ mongoc_client_new (const char *uri_string)
 {
    const mongoc_write_concern_t *write_concern;
    mongoc_client_t *client;
+   const bson_t *read_prefs_tags;
    mongoc_uri_t *uri;
    const bson_t *options;
    bson_iter_t iter;
    bool has_ssl = false;
+   bool slave_okay = false;
 
    if (!uri_string) {
       uri_string = "mongodb://127.0.0.1/";
@@ -685,6 +695,12 @@ mongoc_client_new (const char *uri_string)
       has_ssl = true;
    }
 
+   if (bson_iter_init_find_case (&iter, options, "slaveok") &&
+       BSON_ITER_HOLDS_BOOL (&iter) &&
+       bson_iter_bool (&iter)) {
+      slave_okay = true;
+   }
+
    client = bson_malloc0(sizeof *client);
    client->uri = uri;
    client->request_id = rand ();
@@ -694,7 +710,16 @@ mongoc_client_new (const char *uri_string)
    write_concern = mongoc_uri_get_write_concern (uri);
    client->write_concern = mongoc_write_concern_copy (write_concern);
 
-   client->read_prefs = mongoc_read_prefs_new (MONGOC_READ_PRIMARY);
+   if (slave_okay) {
+      client->read_prefs = mongoc_read_prefs_new (MONGOC_READ_SECONDARY_PREFERRED);
+   } else {
+      client->read_prefs = mongoc_read_prefs_new (MONGOC_READ_PRIMARY);
+   }
+
+   read_prefs_tags = mongoc_uri_get_read_prefs (client->uri);
+   if (!bson_empty (read_prefs_tags)) {
+      mongoc_read_prefs_set_tags (client->read_prefs, read_prefs_tags);
+   }
 
    _mongoc_cluster_init (&client->cluster, client->uri, client);
 
@@ -1156,10 +1181,17 @@ mongoc_client_command (mongoc_client_t           *client,
       read_prefs = client->read_prefs;
    }
 
-   bson_snprintf (ns, sizeof ns, "%s.$cmd", db_name);
+   /*
+    * Allow a caller to provide a fully qualified namespace. Otherwise,
+    * querying something like "$cmd.sys.inprog" is not possible.
+    */
+   if (NULL == strstr (db_name, "$cmd")) {
+      bson_snprintf (ns, sizeof ns, "%s.$cmd", db_name);
+      db_name = ns;
+   }
 
-   return _mongoc_cursor_new (client, ns, flags, skip, limit, batch_size, true,
-                              query, fields, read_prefs);
+   return _mongoc_cursor_new (client, db_name, flags, skip, limit, batch_size,
+                              true, query, fields, read_prefs);
 }
 
 
@@ -1312,4 +1344,23 @@ mongoc_client_get_server_status (mongoc_client_t     *client,     /* IN */
    bson_destroy (&cmd);
 
    return ret;
+}
+
+
+void
+mongoc_client_set_stream_initiator (mongoc_client_t           *client,
+                                    mongoc_stream_initiator_t  initiator,
+                                    void                      *user_data)
+{
+   bson_return_if_fail (client);
+
+   if (!initiator) {
+      initiator = mongoc_client_default_stream_initiator;
+      user_data = client;
+   } else {
+      MONGOC_DEBUG ("Using custom stream initiator.");
+   }
+
+   client->initiator = initiator;
+   client->initiator_data = user_data;
 }

@@ -38,6 +38,9 @@ noinst_PROGRAMS += mongoc-rpc-validate
 mongoc_rpc_validate_SOURCES = examples/mongoc-rpc-validate.c
 mongoc_rpc_validate_CFLAGS = -DMONGOC_COMPILATION $(EXAMPLE_CFLAGS)
 mongoc_rpc_validate_LDADD = libmongoc-priv.la
+if EXPLICIT_LIBS
+mongoc_rpc_validate_LDADD += $(BSON_LIBS)
+endif
 
 noinst_PROGRAMS += mongoc-tail
 mongoc_tail_SOURCES = examples/mongoc-tail.c
@@ -68,3 +71,8 @@ noinst_PROGRAMS += bulk3
 bulk3_SOURCES = examples/bulk/bulk3.c
 bulk3_CFLAGS = $(EXAMPLE_CFLAGS)
 bulk3_LDADD = $(EXAMPLE_LDADD)
+
+noinst_PROGRAMS += aggregation1
+aggregation1_SOURCES = examples/aggregation/aggregation1.c
+aggregation1_CFLAGS = $(EXAMPLE_CFLAGS)
+aggregation1_LDADD = $(EXAMPLE_LDADD)

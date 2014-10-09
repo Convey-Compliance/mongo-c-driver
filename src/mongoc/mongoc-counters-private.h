@@ -15,6 +15,11 @@
  */
 
 
+#if !defined (MONGOC_I_AM_A_DRIVER) && !defined (MONGOC_COMPILATION)
+#error "Only <mongoc.h> can be included directly."
+#endif
+
+
 #ifndef MONGOC_COUNTERS_PRIVATE_H
 #define MONGOC_COUNTERS_PRIVATE_H
 
@@ -65,7 +70,7 @@ _mongoc_get_cpu_count (void)
 #elif defined(__APPLE__) || defined(__sun)
    int ncpu;
 
-   ncpu = sysconf (_SC_NPROCESSORS_ONLN);
+   ncpu = (int) sysconf (_SC_NPROCESSORS_ONLN);
    return (ncpu > 0) ? ncpu : 1;
 #elif defined(_MSC_VER) || defined(_WIN32)
    SYSTEM_INFO si;
