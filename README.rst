@@ -2,6 +2,16 @@
 mongo-c-driver
 ==============
 
+Convey compress feature
+=====
+
+This feature allows to compress\decompress blocks of data using zlib while writing\reading gridfs file. 
+This feature only works through cnv gridfs stream - implementation of mongoc_stream_t, so no original src modified, no original behavior modified. 
+See example-cnv-gridfs example to see how to read\write files using cnv gridfs stream(example similar to original example-gridfs). 
+However cnv gridfs stream uses gridfs stream internally(object composition) so the idea is to hook on gridfs stream and compress data before write and decompress after read. 
+If MONGOC_CNV_NONE(instead MONGOC_CNV_COMPRESS) passed to mongoc_stream_cnv_gridfs_new() it behaves like original gridfs stream.
+Notice that read/write calls returns not only -1 in case of failure(zlib errors -2, -3, etc possible), so make sure you are using >=0 condition to check if call was success.
+
 About
 =====
 

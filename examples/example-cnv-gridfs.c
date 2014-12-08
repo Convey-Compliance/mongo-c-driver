@@ -44,6 +44,8 @@ int main (int argc, char *argv[])
    filename = argv[2];
 
    if (strcmp(command, "read") == 0) {
+      mongoc_stream_t *fstream;
+
       if (argc != 3) {
          fprintf(stderr, "usage - %s read filename\n", argv[0]);
          return 1;
@@ -51,24 +53,28 @@ int main (int argc, char *argv[])
       file = mongoc_gridfs_find_one_by_filename(gridfs, filename, &error);
       assert(file);
 
+      fstream = mongoc_stream_file_new_for_path (argv [2], O_CREAT | O_WRONLY | O_TRUNC, _S_IWRITE | _S_IREAD);
+      assert (fstream);
+
       stream = mongoc_stream_cnv_gridfs_new (file, MONGOC_CNV_COMPRESS);
       assert(stream);
 
       for (;;) {
-         r = mongoc_stream_readv (stream, &iov, 1, -1, 0);
+         r = mongoc_stream_read (stream, iov.iov_base, sizeof buf, -1, 0);
 
          assert (r >= 0);
 
          if (r == 0) {
             break;
          }
-
-         if (fwrite (iov.iov_base, 1, r, stdout) != r) {
-            MONGOC_ERROR ("Failed to write to stdout. Exiting.\n");
+         iov.iov_len = r;
+         if (mongoc_stream_writev (fstream, &iov, 1, 0) == -1) {
+            MONGOC_ERROR ("Failed to write to file. Exiting.\n");
             exit (1);
          }
       }
 
+      mongoc_stream_destroy (fstream);
       mongoc_stream_destroy (stream);
       mongoc_gridfs_file_destroy (file);
    } else if (strcmp(command, "list") == 0) {
