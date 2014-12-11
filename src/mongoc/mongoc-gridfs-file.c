@@ -197,6 +197,7 @@ _mongoc_gridfs_file_new_from_bson (mongoc_gridfs_t *gridfs,
    file = bson_malloc0 (sizeof *file);
 
    file->gridfs = gridfs;
+   file->chunk_callbacks = NULL;
    bson_copy_to (data, &file->bson);
 
    bson_iter_init (&iter, &file->bson);
@@ -295,6 +296,7 @@ _mongoc_gridfs_file_new (mongoc_gridfs_t          *gridfs,
 
    file->gridfs = gridfs;
    file->is_dirty = 1;
+   file->chunk_callbacks = NULL;
 
    if (opt->chunk_size) {
       file->chunk_size = opt->chunk_size;
@@ -481,6 +483,7 @@ mongoc_gridfs_file_writev (mongoc_gridfs_file_t *file,
             _mongoc_gridfs_file_refresh_page (file);
          }
 
+
          r = _mongoc_gridfs_file_page_write (file->page,
                                             (uint8_t *)iov[i].iov_base + iov_pos,
                                             (uint32_t)(iov[i].iov_len - iov_pos));
@@ -530,6 +533,9 @@ _mongoc_gridfs_file_flush_page (mongoc_gridfs_file_t *file)
 
    buf = _mongoc_gridfs_file_page_get_data (file->page);
    len = _mongoc_gridfs_file_page_get_len (file->page);
+
+   if (file->chunk_callbacks)
+      file->chunk_callbacks->before_chunk_write (file, &buf, &len);
 
    selector = bson_new ();
 
@@ -677,6 +683,9 @@ _mongoc_gridfs_file_refresh_page (mongoc_gridfs_file_t *file)
       if (!(n == file->pos / file->chunk_size)) {
          return 0;
       }
+
+      if (file->chunk_callbacks)
+         file->chunk_callbacks->after_chunk_read (file, &data, &len);
    }
 
    file->page = _mongoc_gridfs_file_page_new (data, len, file->chunk_size);
@@ -828,4 +837,12 @@ cleanup:
    bson_destroy (&sel);
 
    return ret;
+}
+
+
+void
+mongoc_gridfs_file_set_chunk_callbacks(mongoc_gridfs_file_t                       *file,
+                                       const mongoc_gridfs_file_chunk_callbacks_t *callbacks)
+{
+   file->chunk_callbacks = callbacks;
 }
