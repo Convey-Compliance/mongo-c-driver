@@ -64,7 +64,7 @@ int main (int argc, char *argv[])
          if (r == 0) {
             break;
          }
-         iov.iov_len = r;
+         iov.iov_len = (u_long)r;
          if (mongoc_stream_writev (fstream, &iov, 1, 0) == -1) {
             MONGOC_ERROR ("Failed to write to file. Exiting.\n");
             exit (1);
@@ -119,7 +119,7 @@ int main (int argc, char *argv[])
         if (r == 0) {
             break;
         }
-        iov.iov_len = r;
+        iov.iov_len = (u_long)r;
         mongoc_gridfs_cnv_file_writev (file, &iov, 1, 0);
       }
 

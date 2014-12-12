@@ -15,7 +15,7 @@ after_chunk_read (mongoc_gridfs_file_t *file, const uint8_t **data, uint32_t *le
 
       *data = cnv_file->buf_for_compress;
       *len = uncompressed_len;
-   } else if (*len > file->chunk_size) {
+   } else if (*len > (uint32_t)file->chunk_size) {
       /* this needed when we reading compressed file without uncompressing it
          mongo implementation assumes that chunk size can't be > file->chunk_size and
          mongoc_gridfs_file_get_length and mongoc_gridfs_file_readv returns invalid values
@@ -42,7 +42,7 @@ before_chunk_write (mongoc_gridfs_file_t *file, const uint8_t **data, uint32_t *
       cnv_file->compressed_length += compressed_len;
       if (cnv_file->need_to_append_compressed_len) {
         /* we can't do this inside save() cause last before_chunk_write() called after save() and we have no final compressed_length at this point */
-        bson_append_int64 (mongoc_gridfs_cnv_file_get_metadata (cnv_file), "compressed_length", -1, cnv_file->compressed_length);
+        bson_append_int64 ((bson_t*)mongoc_gridfs_cnv_file_get_metadata (cnv_file), "compressed_length", -1, cnv_file->compressed_length);
         cnv_file->need_to_append_compressed_len = 0;
       }
 

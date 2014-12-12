@@ -19,7 +19,6 @@
 #include <mongoc.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <vld.h>
 
 #include "TestSuite.h"
 #include "test-libmongoc.h"
