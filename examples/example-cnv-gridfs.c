@@ -3,16 +3,15 @@
 #include <stdlib.h>
 #include <fcntl.h>
 
-#include <mongoc-stream-cnv-gridfs.h>
+#include <mongoc-gridfs-cnv-file.h>
 
 int main (int argc, char *argv[])
 {
    mongoc_gridfs_t *gridfs;
-   mongoc_gridfs_file_t *file;
+   mongoc_gridfs_cnv_file_t *file;
    mongoc_gridfs_file_list_t *list;
    mongoc_gridfs_file_opt_t opt = { 0 };
    mongoc_client_t *client;
-   mongoc_stream_t *stream;
    bson_t query;
    bson_t child;
    bson_error_t error;
@@ -50,17 +49,15 @@ int main (int argc, char *argv[])
          fprintf(stderr, "usage - %s read filename\n", argv[0]);
          return 1;
       }
-      file = mongoc_gridfs_find_one_by_filename(gridfs, filename, &error);
+      file = mongoc_gridfs_find_one_cnv_by_filename(gridfs, filename, &error, MONGOC_CNV_NONE);
       assert(file);
 
       fstream = mongoc_stream_file_new_for_path (argv [2], O_CREAT | O_WRONLY | O_TRUNC, _S_IWRITE | _S_IREAD);
       assert (fstream);
 
-      stream = mongoc_stream_cnv_gridfs_new (file, MONGOC_CNV_COMPRESS);
-      assert(stream);
-
       for (;;) {
-         r = mongoc_stream_read (stream, iov.iov_base, sizeof buf, -1, 0);
+         iov.iov_len = sizeof buf;
+         r = mongoc_gridfs_cnv_file_readv (file, &iov, 1, -1, 0);
 
          assert (r >= 0);
 
@@ -75,9 +72,10 @@ int main (int argc, char *argv[])
       }
 
       mongoc_stream_destroy (fstream);
-      mongoc_stream_destroy (stream);
-      mongoc_gridfs_file_destroy (file);
+      mongoc_gridfs_cnv_file_destroy (file);
    } else if (strcmp(command, "list") == 0) {
+      mongoc_gridfs_file_t *f;
+
       bson_init (&query);
       bson_append_document_begin (&query, "$orderby", -1, &child);
       bson_append_int32 (&child, "filename", -1, 1);
@@ -89,11 +87,11 @@ int main (int argc, char *argv[])
 
       bson_destroy (&query);
 
-      while ((file = mongoc_gridfs_file_list_next (list))) {
-         const char * name = mongoc_gridfs_file_get_filename(file);
+      while ((f = mongoc_gridfs_file_list_next (list))) {
+         const char * name = mongoc_gridfs_file_get_filename(f);
          printf("%s\n", name ? name : "?");
 
-         mongoc_gridfs_file_destroy (file);
+         mongoc_gridfs_file_destroy (f);
       }
 
       mongoc_gridfs_file_list_destroy (list);
@@ -110,8 +108,8 @@ int main (int argc, char *argv[])
 
       opt.filename = filename;
 
-      file = mongoc_gridfs_create_file (gridfs, &opt);
-      stream = mongoc_stream_cnv_gridfs_new (file, MONGOC_CNV_COMPRESS);
+      file = mongoc_gridfs_create_cnv_file (gridfs, &opt, MONGOC_CNV_NONE);
+      assert (file);
 
       for (;; ) {
         r = mongoc_stream_read (fstream, iov.iov_base, sizeof buf,
@@ -122,13 +120,12 @@ int main (int argc, char *argv[])
             break;
         }
         iov.iov_len = r;
-        mongoc_stream_writev (stream, &iov, 1, 0);
+        mongoc_gridfs_cnv_file_writev (file, &iov, 1, 0);
       }
 
-      mongoc_stream_destroy (stream);
       mongoc_stream_destroy (fstream);
-
-      mongoc_gridfs_file_destroy(file);
+      assert (mongoc_gridfs_cnv_file_save (file));
+      mongoc_gridfs_cnv_file_destroy (file);
    } else {
       fprintf(stderr, "Unknown command");
       return 1;
