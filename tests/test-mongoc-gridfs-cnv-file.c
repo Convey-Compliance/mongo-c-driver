@@ -168,13 +168,13 @@ test_write_read_10mb (void)
 
    /* write random data to gridfs file */
    srand ((unsigned int)time (NULL));
-   for (i = 0; i < DATA_LEN; ++i)
+   for (i = 0; i < (int)DATA_LEN; ++i)
       data_buf[i] = rand() % 256;
 
    file = mongoc_gridfs_create_cnv_file (gridfs, &opt, MONGOC_CNV_COMPRESS);
 
    iov.iov_len = sizeof buf;
-   for (i = 0; i < DATA_LEN; i += sizeof buf) {
+   for (i = 0; i < (int)DATA_LEN; i += sizeof buf) {
       iov.iov_base = data_buf + i;
       assert (mongoc_gridfs_cnv_file_writev (file, &iov, 1, 0) >= 0);
    }
@@ -192,7 +192,7 @@ test_write_read_10mb (void)
    assert (compressed_len == expected_compressed_len);
    assert (mongoc_gridfs_cnv_file_get_length (file) == compressed_len);
    compressed_buf = bson_malloc0 ((size_t)compressed_len);
-   iov.iov_len = (size_t)compressed_len;
+   iov.iov_len = (u_long)compressed_len;
    iov.iov_base = compressed_buf;
    assert (mongoc_gridfs_cnv_file_readv (file, &iov, 1, -1, 0) == compressed_len);
    mongoc_gridfs_cnv_file_destroy (file);
