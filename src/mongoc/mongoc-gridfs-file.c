@@ -534,9 +534,6 @@ _mongoc_gridfs_file_flush_page (mongoc_gridfs_file_t *file)
    buf = _mongoc_gridfs_file_page_get_data (file->page);
    len = _mongoc_gridfs_file_page_get_len (file->page);
 
-   if (file->chunk_callbacks)
-      file->chunk_callbacks->before_chunk_write (file, &buf, &len);
-
    selector = bson_new ();
 
    bson_append_value (selector, "files_id", -1, &file->files_id);
@@ -546,6 +543,10 @@ _mongoc_gridfs_file_flush_page (mongoc_gridfs_file_t *file)
 
    bson_append_value (update, "files_id", -1, &file->files_id);
    bson_append_int32 (update, "n", -1, (int32_t)(file->pos / file->chunk_size));
+
+   if (file->chunk_callbacks)
+      file->chunk_callbacks->before_chunk_write (file, &buf, &len);
+
    bson_append_binary (update, "data", -1, BSON_SUBTYPE_BINARY, buf, len);
 
    r = mongoc_collection_update (file->gridfs->chunks, MONGOC_UPDATE_UPSERT,

@@ -38,7 +38,7 @@ _mongoc_gridfs_file_page_new (const uint8_t *data,
    ENTRY;
 
    BSON_ASSERT (data);
-   BSON_ASSERT (len <= chunk_size);
+   //BSON_ASSERT (len <= chunk_size);
 
    page = bson_malloc0 (sizeof *page);
 
