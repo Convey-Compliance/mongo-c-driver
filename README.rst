@@ -6,11 +6,14 @@ Convey compress feature
 =====
 
 This feature allows to compress\decompress blocks of data using zlib while writing\reading gridfs file. 
-This feature only works through cnv gridfs stream - implementation of mongoc_stream_t, so no original src modified, no original behavior modified. 
-See example-cnv-gridfs example to see how to read\write files using cnv gridfs stream(example similar to original example-gridfs). 
-However cnv gridfs stream uses gridfs stream internally(object composition) so the idea is to hook on gridfs stream and compress data before write and decompress after read. 
-If MONGOC_CNV_NONE(instead MONGOC_CNV_COMPRESS) passed to mongoc_stream_cnv_gridfs_new() it behaves like original gridfs stream.
-Notice that read/write calls returns not only -1 in case of failure(zlib errors -2, -3, etc possible), so make sure you are using >=0 condition to check if call was success.
+All new functionality available via mongoc_grigfs_cnv_file_t, it uses mongoc_grigfs_file_t internally(object composition)
+See example-cnv-gridfs example to see how to read\write files using cnv gridfs file(example similar to original example-gridfs).
+Tests for new functionality available in test-mongoc-gridfs-cnv-file.c
+Original src of mongoc-grigfs-file modified to provide hooks: right before chunk write in mongo collection and right after read.
+Compressing each chunk gives ability to seek over compressed file like it isn't compressed. 
+Notice that length of compressed file is saved as original(uncompressed) file length, compressed length saved in metadata.
+Additionally mongoc_gridfs_cnv_file_is_compressed() and mongoc_gridfs_cnv_file_get_compressed_length() provided.
+Because of tricks with file size and chunks size and implementation of mongoc_grigfs_cnv_file_t that depends on those sizes, it's not possible to read compressed file using mongoc_grigfs_cnv_file_t, you should use mongoc_grigfs_cnv_file_t with MONGOC_CNV_NONE flag.
 
 About
 =====
