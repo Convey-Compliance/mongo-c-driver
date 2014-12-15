@@ -128,7 +128,7 @@ main (int   argc,
 
    TestSuite_Init (&suite, "", argc, argv);
 
-   /*test_array_install (&suite);
+   test_array_install (&suite);
    test_buffer_install (&suite);
    test_client_install (&suite);
    test_client_pool_install (&suite);
@@ -146,7 +146,7 @@ main (int   argc,
    test_rpc_install (&suite);
    test_stream_install (&suite);
    test_uri_install (&suite);
-   test_write_concern_install (&suite);*/
+   test_write_concern_install (&suite);
    test_gridfs_cnv_file_install (&suite);
 #ifdef MONGOC_ENABLE_SSL
    test_x509_install (&suite);
