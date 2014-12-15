@@ -2,12 +2,30 @@
 #include "mongoc-gridfs-file-private.h"
 #include <zlib.h>
 
+const char * const MONGOC_CNV_GRIDFS_FILE_COMPRESSED_LEN = "compressed_len",
+           * const MONGOC_CNV_GRIDFS_FILE_AES_IV = "aes_initialization_vector",
+           * const MONGOC_CNV_GRIDFS_FILE_AES_TAG = "aes_tag",
+           * const ERR_MSG_INVALID_AES_KEY = "Invalid AES key",
+           * const ERR_MSG_AES_EAX_INTEGRITY_CHECK_FAILED = "Encrypted or decrypted data is corrupted";
+
+
+static void
+fill_buf_with_rand(unsigned char *buf, size_t len) {
+   size_t i;
+
+   srand ((unsigned int)time (NULL));
+   for (i = 0; i < len; ++i)
+      buf[i] = rand() % 256 + 1;
+}
+
 
 static void
 after_chunk_read (mongoc_gridfs_file_t *file, const uint8_t **data, uint32_t *len)
 {
    mongoc_gridfs_cnv_file_t *cnv_file = (mongoc_gridfs_cnv_file_t *)file->chunk_callbacks_custom_data;
 
+   if (cnv_file->flags & MONGOC_CNV_DECRYPT)
+      BSON_ASSERT (eax_decrypt((uint8_t *)*data, *len, &cnv_file->aes_ctx) == RETURN_GOOD);
    if (cnv_file->flags & MONGOC_CNV_UNCOMPRESS) {
       uint32_t uncompressed_len = file->chunk_size;
 
@@ -40,16 +58,34 @@ before_chunk_write (mongoc_gridfs_file_t *file, const uint8_t **data, uint32_t *
 
       BSON_ASSERT (Z_OK == compress2 (cnv_file->buf_for_compress, &compressed_len, *data, *len, Z_BEST_SPEED));
       cnv_file->compressed_length += compressed_len;
-      if (cnv_file->need_to_append_compressed_len) {
-        /* we can't do this inside save() cause last before_chunk_write() called after save() and we have no final compressed_length at this point */
-        bson_append_int64 ((bson_t*)mongoc_gridfs_cnv_file_get_metadata (cnv_file), "compressed_length", -1, cnv_file->compressed_length);
-        cnv_file->need_to_append_compressed_len = 0;
-      }
+
+      if (cnv_file->need_to_append_metadata)
+        BSON_ASSERT (bson_append_int64 ((bson_t*)mongoc_gridfs_cnv_file_get_metadata (cnv_file),
+                                        MONGOC_CNV_GRIDFS_FILE_COMPRESSED_LEN, -1,
+                                        cnv_file->compressed_length));
 
       *data = cnv_file->buf_for_compress;
       *len = compressed_len;
    }
+   if (cnv_file->flags & MONGOC_CNV_ENCRYPT) {
+      BSON_ASSERT (eax_encrypt((uint8_t *)*data, *len, &cnv_file->aes_ctx) == RETURN_GOOD);
+      cnv_file->is_encrypted = true;
+
+      if (cnv_file->need_to_append_metadata) {
+         bson_t *metadata = (bson_t*)mongoc_gridfs_cnv_file_get_metadata (cnv_file);
+         unsigned char tag[AES_BLOCK_SIZE];
+
+         BSON_ASSERT (eax_compute_tag (tag, sizeof tag, &cnv_file->aes_ctx) == RETURN_GOOD);
+         BSON_ASSERT (bson_append_binary (metadata, MONGOC_CNV_GRIDFS_FILE_AES_TAG, -1, BSON_SUBTYPE_BINARY, 
+                                          tag, sizeof tag));
+
+         BSON_ASSERT (bson_append_binary (metadata, MONGOC_CNV_GRIDFS_FILE_AES_IV, -1, BSON_SUBTYPE_BINARY, 
+                                          cnv_file->aes_initialization_vector, sizeof cnv_file->aes_initialization_vector));
+      }
+   }
+   cnv_file->need_to_append_metadata = false;
 }
+
 
 mongoc_gridfs_file_chunk_callbacks_t callbacks = { after_chunk_read, before_chunk_write };
 
@@ -63,12 +99,20 @@ load_metadata (mongoc_gridfs_cnv_file_t *cnv_file)
    if (!metadata)
       return;
 
-   if (bson_iter_init_find (&it, metadata, "compressed_length"))
+   if (bson_iter_init_find (&it, metadata, MONGOC_CNV_GRIDFS_FILE_COMPRESSED_LEN))
       cnv_file->compressed_length = bson_iter_int64 (&it);
    if (!(cnv_file->flags & MONGOC_CNV_UNCOMPRESS) && mongoc_gridfs_cnv_file_is_compressed (cnv_file))
       /* need to set size to be actual size in case reading compressed file without uncompress
          cause implementation depends on this */
       cnv_file->file->length = cnv_file->compressed_length;
+   if (bson_iter_init_find (&it, metadata, MONGOC_CNV_GRIDFS_FILE_AES_IV)) {
+      const uint8_t *aes_initialization_vector;
+      uint32_t len;
+      bson_iter_binary (&it, NULL, &len, &aes_initialization_vector);
+      BSON_ASSERT (len == sizeof cnv_file->aes_initialization_vector);
+      memcpy (cnv_file->aes_initialization_vector, aes_initialization_vector, sizeof cnv_file->aes_initialization_vector);
+   }
+   cnv_file->is_encrypted = bson_iter_init_find (&it, metadata, MONGOC_CNV_GRIDFS_FILE_AES_TAG);
 }
 
 static mongoc_gridfs_cnv_file_t *
@@ -84,13 +128,24 @@ mongoc_gridfs_cnv_file_new (mongoc_gridfs_file_t *file, mongoc_gridfs_cnv_file_f
    cnv_file->flags = flags;
    cnv_file->compressed_length = 0;
    cnv_file->length_fix = 0;
-   cnv_file->need_to_append_compressed_len = 0;
+   cnv_file->need_to_append_metadata = false;
    cnv_file->buf_for_compress = cnv_file->flags & MONGOC_CNV_COMPRESS || cnv_file->flags & MONGOC_CNV_UNCOMPRESS ?
      bson_malloc0 (compressBound (file->chunk_size)) : NULL;
    cnv_file->file->chunk_callbacks_custom_data = cnv_file;
    mongoc_gridfs_file_set_chunk_callbacks (file, &callbacks);
 
+   cnv_file->aes_key_is_valid = false;
+   cnv_file->is_encrypted = false;
+   if (cnv_file->flags & MONGOC_CNV_ENCRYPT)
+      fill_buf_with_rand (cnv_file->aes_initialization_vector, sizeof cnv_file->aes_initialization_vector);
+   else
+      memset (cnv_file->aes_initialization_vector, 0, sizeof cnv_file->aes_initialization_vector);
+
    load_metadata (cnv_file);
+
+   if (cnv_file->flags & MONGOC_CNV_ENCRYPT || cnv_file->flags & MONGOC_CNV_DECRYPT)
+      BSON_ASSERT (eax_init_message (cnv_file->aes_initialization_vector,  sizeof cnv_file->aes_initialization_vector,
+                                     &cnv_file->aes_ctx) == RETURN_GOOD);
 
    return cnv_file;
 }
@@ -167,7 +222,27 @@ mongoc_gridfs_cnv_file_destroy (mongoc_gridfs_cnv_file_t *file)
    mongoc_gridfs_file_destroy (file->file);
    if(file->flags & MONGOC_CNV_COMPRESS || file->flags & MONGOC_CNV_UNCOMPRESS)
       bson_free (file->buf_for_compress);
+   if(file->flags & MONGOC_CNV_ENCRYPT || file->flags & MONGOC_CNV_DECRYPT)
+      eax_end (&file->aes_ctx);
    bson_free (file);
+}
+
+static bool
+check_decrypted_data_integrity (mongoc_gridfs_cnv_file_t *file)
+{
+   unsigned char tag[AES_BLOCK_SIZE];
+   const bson_t *metadata = mongoc_gridfs_cnv_file_get_metadata (file);
+   bson_iter_t it;
+   uint8_t *saved_after_encryption_tag;
+   uint32_t saved_after_encryption_tag_len;
+
+   BSON_ASSERT (bson_iter_init_find (&it, metadata, MONGOC_CNV_GRIDFS_FILE_AES_TAG));
+   bson_iter_binary (&it, NULL, &saved_after_encryption_tag_len, &saved_after_encryption_tag);
+   BSON_ASSERT (saved_after_encryption_tag_len == AES_BLOCK_SIZE);
+
+   BSON_ASSERT (eax_compute_tag(tag, sizeof tag, &file->aes_ctx) == RETURN_GOOD);
+
+   return memcmp (tag, saved_after_encryption_tag, AES_BLOCK_SIZE) == 0;
 }
 
 ssize_t
@@ -177,11 +252,26 @@ mongoc_gridfs_cnv_file_readv (mongoc_gridfs_cnv_file_t *file,
                               size_t                    min_bytes,
                               uint32_t                  timeout_msec)
 {
-   ssize_t ret = mongoc_gridfs_file_readv (file->file, iov, iovcnt, min_bytes, timeout_msec);
+   ssize_t ret;
+
+   if (file->file->failed = file->flags & MONGOC_CNV_DECRYPT && !file->aes_key_is_valid) {
+      bson_set_error(&file->file->error, 0, 0, ERR_MSG_INVALID_AES_KEY);
+      return -1;
+   }
+
+   ret = mongoc_gridfs_file_readv (file->file, iov, iovcnt, min_bytes, timeout_msec);
    if (ret > 0) {
       ret += file->read_length_fix;
       file->read_length_fix = 0;
    }
+
+   if (file->flags & MONGOC_CNV_DECRYPT && ret == 0) {
+      if (file->file->failed = !check_decrypted_data_integrity (file)) {
+         bson_set_error(&file->file->error, 0, 0, ERR_MSG_AES_EAX_INTEGRITY_CHECK_FAILED);
+         return -1;
+      }
+   }
+
    return ret;
 }
 
@@ -191,6 +281,11 @@ mongoc_gridfs_cnv_file_writev (mongoc_gridfs_cnv_file_t *file,
                                size_t                    iovcnt,
                                uint32_t                  timeout_msec)
 {
+   if (file->file->failed = file->flags & MONGOC_CNV_ENCRYPT && !file->aes_key_is_valid) {
+      bson_set_error(&file->file->error, 0, 0, ERR_MSG_INVALID_AES_KEY);
+      return -1;
+   }
+
    return mongoc_gridfs_file_writev (file->file, iov, iovcnt, timeout_msec);
 }
 
@@ -208,6 +303,13 @@ mongoc_gridfs_cnv_file_tell (mongoc_gridfs_cnv_file_t *file)
    return mongoc_gridfs_file_tell (file->file);
 }
 
+
+bool
+mongoc_gridfs_cnv_file_error (mongoc_gridfs_cnv_file_t *file,
+                              bson_error_t             *error)
+{
+   return mongoc_gridfs_file_error (file->file, error);
+}
 
 int64_t
 mongoc_gridfs_cnv_file_get_length (mongoc_gridfs_cnv_file_t *file)
@@ -230,9 +332,14 @@ mongoc_gridfs_cnv_file_get_upload_date (mongoc_gridfs_cnv_file_t *file)
 bool
 mongoc_gridfs_cnv_file_save (mongoc_gridfs_cnv_file_t *file)
 {
-   bson_t metadata = BSON_INITIALIZER;
-   mongoc_gridfs_file_set_metadata (file->file, &metadata);
-   file->need_to_append_compressed_len = 1;
+   if (file->flags & MONGOC_CNV_COMPRESS || file->flags & MONGOC_CNV_ENCRYPT) {
+      bson_t metadata = BSON_INITIALIZER;
+      mongoc_gridfs_file_set_metadata (file->file, &metadata);
+      /* we can't set metadata here cause last before_chunk_write() called after save() 
+        and we have no final data at this point */
+      file->need_to_append_metadata = true;
+   }
+
    return mongoc_gridfs_file_save (file->file);
 }
 
@@ -253,4 +360,28 @@ int64_t
 mongoc_gridfs_cnv_file_get_compressed_length (mongoc_gridfs_cnv_file_t *file)
 {
    return file->compressed_length;
+}
+
+bool
+mongoc_gridfs_cnv_file_set_aes_key (mongoc_gridfs_cnv_file_t *file,
+                                    const unsigned char      *aes_key,
+                                    uint16_t                  aes_key_size)
+{
+   static const uint16_t AES_VALID_SIZE_256 = 256, 
+                         AES_VALID_SIZE_192 = 192, 
+                         AES_VALID_SIZE_128 = 128, 
+                         BITS_IN_BYTE = 8;
+
+   file->aes_key_is_valid = aes_key_size == AES_VALID_SIZE_256 / BITS_IN_BYTE || 
+                            aes_key_size == AES_VALID_SIZE_192 / BITS_IN_BYTE || 
+                            aes_key_size == AES_VALID_SIZE_128 / BITS_IN_BYTE;
+   BSON_ASSERT (eax_init_and_key(aes_key, aes_key_size, &file->aes_ctx) == RETURN_GOOD);
+
+   return file->aes_key_is_valid;
+}
+
+bool
+mongoc_gridfs_cnv_file_is_encrypted (mongoc_gridfs_cnv_file_t *file)
+{
+   return file->is_encrypted;
 }

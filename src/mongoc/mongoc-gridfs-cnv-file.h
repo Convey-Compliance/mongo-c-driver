@@ -9,6 +9,7 @@
 
 #include "mongoc-gridfs-file.h"
 #include "mongoc-gridfs.h"
+#include <eax.h>
 
 
 BSON_BEGIN_DECLS
@@ -31,11 +32,15 @@ struct _mongoc_gridfs_cnv_file_t
 {
   mongoc_gridfs_file_t          *file;
   mongoc_gridfs_cnv_file_flags_t flags;
-  uint8_t *buf_for_compress;
-  int64_t compressed_length;
-  uint32_t length_fix;
-  uint32_t read_length_fix;
-  char need_to_append_compressed_len;
+  uint8_t                       *buf_for_compress;
+  int64_t                        compressed_length;
+  uint32_t                       length_fix;
+  uint32_t                       read_length_fix;
+  bool                           need_to_append_metadata;
+  eax_ctx                        aes_ctx;
+  bool                           aes_key_is_valid;
+  bool                           is_encrypted;
+  unsigned char                  aes_initialization_vector[AES_BLOCK_SIZE];
 };
 
 
@@ -77,6 +82,8 @@ MONGOC_GRIDFS_CNV_FILE_BSON_HEADER (aliases)
 MONGOC_GRIDFS_CNV_FILE_BSON_HEADER (metadata)
 
 
+bool     mongoc_gridfs_cnv_file_error           (mongoc_gridfs_cnv_file_t *file,
+                                                 bson_error_t             *error);
 int64_t  mongoc_gridfs_cnv_file_get_length      (mongoc_gridfs_cnv_file_t *file);
 int32_t  mongoc_gridfs_cnv_file_get_chunk_size  (mongoc_gridfs_cnv_file_t *file);
 int64_t  mongoc_gridfs_cnv_file_get_upload_date (mongoc_gridfs_cnv_file_t *file);
@@ -101,6 +108,10 @@ bool     mongoc_gridfs_cnv_file_remove          (mongoc_gridfs_cnv_file_t *file,
                                                  bson_error_t             *error);
 bool    mongoc_gridfs_cnv_file_is_compressed    (mongoc_gridfs_cnv_file_t *file);
 int64_t mongoc_gridfs_cnv_file_get_compressed_length      (mongoc_gridfs_cnv_file_t *file);
+bool    mongoc_gridfs_cnv_file_set_aes_key      (mongoc_gridfs_cnv_file_t *file,
+                                                 const unsigned char      *aes_key,
+                                                 uint16_t                  aes_key_size);
+bool    mongoc_gridfs_cnv_file_is_encrypted     (mongoc_gridfs_cnv_file_t *file);
 
 
 BSON_END_DECLS
