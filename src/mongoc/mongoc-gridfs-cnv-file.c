@@ -2,20 +2,17 @@
 #include "mongoc-gridfs-file-private.h"
 #include <zlib.h>
 
+
 const char * const MONGOC_CNV_GRIDFS_FILE_COMPRESSED_LEN = "compressed_len",
            * const MONGOC_CNV_GRIDFS_FILE_AES_IV = "aes_initialization_vector",
            * const MONGOC_CNV_GRIDFS_FILE_AES_TAG = "aes_tag",
+           * const MONGOC_CNV_GRIDFS_FILE_AES_SALT = "aes_salt",
            * const ERR_MSG_INVALID_AES_KEY = "Invalid AES key",
-           * const ERR_MSG_AES_EAX_INTEGRITY_CHECK_FAILED = "Encrypted or decrypted data is corrupted";
-
+           * const ERR_MSG_AES_EAX_INTEGRITY_CHECK_FAILED = "Encrypted or decrypted data is corrupted or wrong key\\password used";
 
 static void
 fill_buf_with_rand(unsigned char *buf, size_t len) {
-   size_t i;
-
-   srand ((unsigned int)time (NULL));
-   for (i = 0; i < len; ++i)
-      buf[i] = rand() % 256 + 1;
+   BSON_ASSERT (libscrypt_salt_gen (buf, len) == 0);
 }
 
 
@@ -81,6 +78,8 @@ before_chunk_write (mongoc_gridfs_file_t *file, const uint8_t **data, uint32_t *
 
          BSON_ASSERT (bson_append_binary (metadata, MONGOC_CNV_GRIDFS_FILE_AES_IV, -1, BSON_SUBTYPE_BINARY, 
                                           cnv_file->aes_initialization_vector, sizeof cnv_file->aes_initialization_vector));
+         BSON_ASSERT (bson_append_binary (metadata, MONGOC_CNV_GRIDFS_FILE_AES_SALT, -1, BSON_SUBTYPE_BINARY, 
+                                          cnv_file->salt, sizeof cnv_file->salt));
       }
    }
    cnv_file->need_to_append_metadata = false;
@@ -111,6 +110,13 @@ load_metadata (mongoc_gridfs_cnv_file_t *cnv_file)
       bson_iter_binary (&it, NULL, &len, &aes_initialization_vector);
       BSON_ASSERT (len == sizeof cnv_file->aes_initialization_vector);
       memcpy (cnv_file->aes_initialization_vector, aes_initialization_vector, sizeof cnv_file->aes_initialization_vector);
+   }
+   if (bson_iter_init_find (&it, metadata, MONGOC_CNV_GRIDFS_FILE_AES_SALT)) {
+      const uint8_t *aes_salt;
+      uint32_t len;
+      bson_iter_binary (&it, NULL, &len, &aes_salt);
+      BSON_ASSERT (len == sizeof cnv_file->salt);
+      memcpy (cnv_file->salt, aes_salt, sizeof cnv_file->salt);
    }
    cnv_file->is_encrypted = bson_iter_init_find (&it, metadata, MONGOC_CNV_GRIDFS_FILE_AES_TAG);
 }
@@ -378,6 +384,24 @@ mongoc_gridfs_cnv_file_set_aes_key (mongoc_gridfs_cnv_file_t *file,
    BSON_ASSERT (eax_init_and_key(aes_key, aes_key_size, &file->aes_ctx) == RETURN_GOOD);
 
    return file->aes_key_is_valid;
+}
+
+bool
+mongoc_gridfs_cnv_file_set_aes_key_from_password (mongoc_gridfs_cnv_file_t *file,
+                                                  const char               *password,
+                                                  uint16_t                  password_size)
+{
+   #define AUTOGEN_AES_KEY_SIZE 32
+   uint8_t key[AUTOGEN_AES_KEY_SIZE];
+   static const uint64_t SRCYPT_n_that_takes_avg_sec_to_generate_key = 4096;
+
+   if (file->flags & MONGOC_CNV_ENCRYPT)
+      BSON_ASSERT (libscrypt_salt_gen (file->salt, sizeof file->salt) == 0);
+   BSON_ASSERT (libscrypt_scrypt (password, password_size, file->salt, sizeof file->salt, 
+                                  SRCYPT_n_that_takes_avg_sec_to_generate_key, SCRYPT_r, SCRYPT_p,
+                                  key, sizeof key) == 0);
+
+   return mongoc_gridfs_cnv_file_set_aes_key (file, key, sizeof key);
 }
 
 bool
