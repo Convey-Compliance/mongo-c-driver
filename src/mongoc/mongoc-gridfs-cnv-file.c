@@ -1,5 +1,6 @@
 #include "mongoc-gridfs-cnv-file.h"
 #include "mongoc-gridfs-file-private.h"
+#include "mongoc-gridfs-file-page-private.h"
 #include <zlib.h>
 
 
@@ -11,8 +12,33 @@ const char * const MONGOC_CNV_GRIDFS_FILE_COMPRESSED_LEN = "compressed_len",
            * const ERR_MSG_AES_EAX_INTEGRITY_CHECK_FAILED = "Encrypted or decrypted data is corrupted or wrong key\\password used";
 
 static void
-fill_buf_with_rand(unsigned char *buf, size_t len) {
+fill_buf_with_rand (unsigned char *buf, size_t len)
+{
    BSON_ASSERT (libscrypt_salt_gen (buf, len) == 0);
+}
+
+
+static void
+append_metadata (mongoc_gridfs_cnv_file_t *file)
+{
+   bson_t *metadata = (bson_t*)mongoc_gridfs_cnv_file_get_metadata (file);
+
+   if (file->flags & MONGOC_CNV_ENCRYPT) {
+      unsigned char tag[AES_BLOCK_SIZE];
+
+      BSON_ASSERT (eax_compute_tag (tag, sizeof tag, &file->aes_ctx) == RETURN_GOOD);
+      BSON_ASSERT (bson_append_binary (metadata, MONGOC_CNV_GRIDFS_FILE_AES_TAG, -1, BSON_SUBTYPE_BINARY, 
+                                       tag, sizeof tag));
+
+      BSON_ASSERT (bson_append_binary (metadata, MONGOC_CNV_GRIDFS_FILE_AES_IV, -1, BSON_SUBTYPE_BINARY, 
+                                       file->aes_initialization_vector, sizeof file->aes_initialization_vector));
+      BSON_ASSERT (bson_append_binary (metadata, MONGOC_CNV_GRIDFS_FILE_AES_SALT, -1, BSON_SUBTYPE_BINARY, 
+                                       file->salt, sizeof file->salt));
+   }
+   if (file->flags & MONGOC_CNV_COMPRESS)
+     BSON_ASSERT (bson_append_int64 ((bson_t*)mongoc_gridfs_cnv_file_get_metadata (file),
+                                      MONGOC_CNV_GRIDFS_FILE_COMPRESSED_LEN, -1,
+                                      file->compressed_length));
 }
 
 
@@ -56,33 +82,17 @@ before_chunk_write (mongoc_gridfs_file_t *file, const uint8_t **data, uint32_t *
       BSON_ASSERT (Z_OK == compress2 (cnv_file->buf_for_compress, &compressed_len, *data, *len, Z_BEST_SPEED));
       cnv_file->compressed_length += compressed_len;
 
-      if (cnv_file->need_to_append_metadata)
-        BSON_ASSERT (bson_append_int64 ((bson_t*)mongoc_gridfs_cnv_file_get_metadata (cnv_file),
-                                        MONGOC_CNV_GRIDFS_FILE_COMPRESSED_LEN, -1,
-                                        cnv_file->compressed_length));
-
       *data = cnv_file->buf_for_compress;
       *len = compressed_len;
    }
    if (cnv_file->flags & MONGOC_CNV_ENCRYPT) {
       BSON_ASSERT (eax_encrypt((uint8_t *)*data, *len, &cnv_file->aes_ctx) == RETURN_GOOD);
       cnv_file->is_encrypted = true;
-
-      if (cnv_file->need_to_append_metadata) {
-         bson_t *metadata = (bson_t*)mongoc_gridfs_cnv_file_get_metadata (cnv_file);
-         unsigned char tag[AES_BLOCK_SIZE];
-
-         BSON_ASSERT (eax_compute_tag (tag, sizeof tag, &cnv_file->aes_ctx) == RETURN_GOOD);
-         BSON_ASSERT (bson_append_binary (metadata, MONGOC_CNV_GRIDFS_FILE_AES_TAG, -1, BSON_SUBTYPE_BINARY, 
-                                          tag, sizeof tag));
-
-         BSON_ASSERT (bson_append_binary (metadata, MONGOC_CNV_GRIDFS_FILE_AES_IV, -1, BSON_SUBTYPE_BINARY, 
-                                          cnv_file->aes_initialization_vector, sizeof cnv_file->aes_initialization_vector));
-         BSON_ASSERT (bson_append_binary (metadata, MONGOC_CNV_GRIDFS_FILE_AES_SALT, -1, BSON_SUBTYPE_BINARY, 
-                                          cnv_file->salt, sizeof cnv_file->salt));
-      }
    }
-   cnv_file->need_to_append_metadata = false;
+   if (cnv_file->need_to_append_metadata) {
+      append_metadata (cnv_file);
+      cnv_file->need_to_append_metadata = false;
+   }
 }
 
 
@@ -341,9 +351,13 @@ mongoc_gridfs_cnv_file_save (mongoc_gridfs_cnv_file_t *file)
    if (file->flags & MONGOC_CNV_COMPRESS || file->flags & MONGOC_CNV_ENCRYPT) {
       bson_t metadata = BSON_INITIALIZER;
       mongoc_gridfs_file_set_metadata (file->file, &metadata);
-      /* we can't set metadata here cause last before_chunk_write() called after save() 
-        and we have no final data at this point */
-      file->need_to_append_metadata = true;
+
+      if (file->file->page && _mongoc_gridfs_file_page_is_dirty (file->file->page))
+         /* we can't set metadata here cause page is pending flush
+            we have no final data at this point and we'll append metadata before chunk write */
+         file->need_to_append_metadata = true;
+      else
+         append_metadata (file);
    }
 
    return mongoc_gridfs_file_save (file->file);
