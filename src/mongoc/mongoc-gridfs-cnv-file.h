@@ -10,6 +10,7 @@
 #include "mongoc-gridfs-file.h"
 #include "mongoc-gridfs.h"
 #include <eax.h>
+#include <libscrypt.h>
 
 
 BSON_BEGIN_DECLS
@@ -40,7 +41,8 @@ struct _mongoc_gridfs_cnv_file_t
   eax_ctx                        aes_ctx;
   bool                           aes_key_is_valid;
   bool                           is_encrypted;
-  unsigned char                  aes_initialization_vector[AES_BLOCK_SIZE];
+  uint8_t                        aes_initialization_vector[AES_BLOCK_SIZE];
+  uint8_t                        salt[SCRYPT_SALT_LEN];
 };
 
 
@@ -111,6 +113,9 @@ int64_t mongoc_gridfs_cnv_file_get_compressed_length      (mongoc_gridfs_cnv_fil
 bool    mongoc_gridfs_cnv_file_set_aes_key      (mongoc_gridfs_cnv_file_t *file,
                                                  const unsigned char      *aes_key,
                                                  uint16_t                  aes_key_size);
+bool    mongoc_gridfs_cnv_file_set_aes_key_from_password  (mongoc_gridfs_cnv_file_t *file,
+                                                           const char               *password,
+                                                           uint16_t                  password_size);
 bool    mongoc_gridfs_cnv_file_is_encrypted     (mongoc_gridfs_cnv_file_t *file);
 
 

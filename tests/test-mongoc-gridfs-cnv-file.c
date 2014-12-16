@@ -272,7 +272,7 @@ test_encrypted_write (void)
 
    /* white hello world with encryption enabled */
    file = mongoc_gridfs_create_cnv_file (gridfs, &opt, MONGOC_CNV_ENCRYPT);
-   mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key);
+   assert (mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key));
    write_hello_world_to_file (file);
 
    /* read file without decryption */
@@ -308,13 +308,13 @@ test_encrypted_read (void)
 
    /* write encrypted hello world */
    file = mongoc_gridfs_create_cnv_file (gridfs, &opt, MONGOC_CNV_ENCRYPT);
-   mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key);
+   assert (mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key));
    write_hello_world_to_file (file);
 
    /* read encrypted file and decrypt it */
    file = mongoc_gridfs_find_one_cnv_by_filename(gridfs, filename, &error, MONGOC_CNV_DECRYPT);
    assert(file);
-   mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key);
+   assert (mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key));
 
    /* should be encrypted */
    assert (!mongoc_gridfs_cnv_file_is_compressed (file));
@@ -345,13 +345,13 @@ test_encrypted_read_after_seek (void)
 
    /* write encrypted hello world */
    file = mongoc_gridfs_create_cnv_file (gridfs, &opt, MONGOC_CNV_ENCRYPT);
-   mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key);
+   assert (mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key));
    write_hello_world_to_file (file);
 
    /* read encrypted file and decrypt it */
    file = mongoc_gridfs_find_one_cnv_by_filename(gridfs, filename, &error, MONGOC_CNV_DECRYPT);
    assert(file);
-   mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key);
+   assert (mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key));
 
    /* seek on few bytes */
    assert (mongoc_gridfs_cnv_file_seek (file, seek_delta, SEEK_END) == 0);
@@ -382,7 +382,7 @@ test_encrypted_write_read_10mb (void)
    /* write random data to gridfs file */
    file = mongoc_gridfs_create_cnv_file (gridfs, &opt, MONGOC_CNV_ENCRYPT);
    assert (file);
-   mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key);
+   assert (mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key));
 
    iov.iov_len = sizeof buf;
    for (i = 0; i < DATA_LEN; i += sizeof buf) {
@@ -408,7 +408,7 @@ test_encrypted_write_read_10mb (void)
    /* read encrypted data with decryption */
    file = mongoc_gridfs_find_one_cnv_by_filename(gridfs, filename, &error, MONGOC_CNV_DECRYPT);
    assert (file);
-   mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key);
+   assert (mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key));
 
    i = 0;
    iov.iov_base = buf;
@@ -469,7 +469,7 @@ test_encrypted_integrity_check_failed (void)
    /* read encrypted file and decrypt it */
    file = mongoc_gridfs_find_one_cnv_by_filename (gridfs, filename, &error, MONGOC_CNV_DECRYPT);
    assert(file);
-   mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key);
+   assert (mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key));
 
    /* should be encrypted */
    assert (mongoc_gridfs_cnv_file_is_encrypted (file));
@@ -479,7 +479,77 @@ test_encrypted_integrity_check_failed (void)
    /* call second time to force integrity check using aes eax tag */
    assert (mongoc_gridfs_cnv_file_readv (file, &iov, 1, -1, 0) == -1);
    assert (mongoc_gridfs_cnv_file_error (file, &err));
-   assert (strcmp (err.message, "Encrypted or decrypted data is corrupted") == 0);
+   assert (strcmp (err.message, "Encrypted or decrypted data is corrupted or wrong key\\password used") == 0);
+
+   mongoc_gridfs_cnv_file_destroy (file);
+   TEARDOWN
+}
+
+
+static void
+test_encrypted_write_using_password (void)
+{
+   SETUP_DECLARATIONS ("test_encrypted_write_using_password")
+   const char pass[] = "111111";
+
+   SETUP
+
+   /* white hello world with encryption enabled using password instead aes key */
+   file = mongoc_gridfs_create_cnv_file (gridfs, &opt, MONGOC_CNV_ENCRYPT);
+   assert (file);
+   assert (mongoc_gridfs_cnv_file_set_aes_key_from_password (file, pass, sizeof pass));
+   write_hello_world_to_file (file);
+
+   /* get encrypted written data without decryption */
+   file = mongoc_gridfs_find_one_cnv_by_filename (gridfs, filename, &error, MONGOC_CNV_NONE);
+   assert (file);
+   assert (mongoc_gridfs_cnv_file_is_encrypted (file));
+   assert (mongoc_gridfs_cnv_file_readv (file, &iov, 1, -1, 0) == sizeof hello_world);
+   assert (memcmp (hello_world, iov.iov_base, sizeof hello_world) != 0);
+   mongoc_gridfs_cnv_file_destroy (file);
+
+   /* read encrypted data with decryption */
+   file = mongoc_gridfs_find_one_cnv_by_filename (gridfs, filename, &error, MONGOC_CNV_DECRYPT);
+   assert (file);
+   assert (mongoc_gridfs_cnv_file_is_encrypted (file));
+   assert (mongoc_gridfs_cnv_file_set_aes_key_from_password (file, pass, sizeof pass));
+
+   /* check data is decrypted */
+   assert (mongoc_gridfs_cnv_file_readv (file, &iov, 1, -1, 0) == sizeof hello_world);
+   assert (memcmp (hello_world, iov.iov_base, sizeof hello_world) == 0);
+
+   mongoc_gridfs_cnv_file_destroy (file);
+   TEARDOWN
+}
+
+
+static void
+test_encrypted_write_using_password_read_using_key (void)
+{
+   SETUP_DECLARATIONS ("test_encrypted_write_using_password_read_using_key")
+   const char pass[] = "2222222";
+   bson_error_t err;
+
+   SETUP
+
+   /* white hello world with encryption enabled using password instead aes key */
+   file = mongoc_gridfs_create_cnv_file (gridfs, &opt, MONGOC_CNV_ENCRYPT);
+   assert (file);
+   assert (mongoc_gridfs_cnv_file_set_aes_key_from_password (file, pass, sizeof pass));
+   write_hello_world_to_file (file);
+
+   /* read encrypted data with decryption */
+   file = mongoc_gridfs_find_one_cnv_by_filename (gridfs, filename, &error, MONGOC_CNV_DECRYPT);
+   assert (file);
+   assert (mongoc_gridfs_cnv_file_is_encrypted (file));
+   /* notice we use key here instead of password */
+   assert (mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key));
+
+   /* we should get integrity check error cause we used key instead password */
+   assert (mongoc_gridfs_cnv_file_readv (file, &iov, 1, -1, 0) == sizeof hello_world);
+   assert (mongoc_gridfs_cnv_file_readv (file, &iov, 1, -1, 0) == -1);
+   assert (mongoc_gridfs_cnv_file_error (file, &err));
+   assert (strcmp (err.message, "Encrypted or decrypted data is corrupted or wrong key\\password used") == 0);
 
    mongoc_gridfs_cnv_file_destroy (file);
    TEARDOWN
@@ -509,6 +579,8 @@ test_gridfs_cnv_file_install (TestSuite *suite)
    TestSuite_Add (suite, "/Cnv_file/encrypted/read_after_seek", test_encrypted_read_after_seek);
    TestSuite_Add (suite, "/Cnv_file/encrypted/write_read_10mb", test_encrypted_write_read_10mb);
    TestSuite_Add (suite, "/Cnv_file/encrypted/integrity_check_failed", test_encrypted_integrity_check_failed);
+   TestSuite_Add (suite, "/Cnv_file/encrypted/write_using_password", test_encrypted_write_using_password);
+   TestSuite_Add (suite, "/Cnv_file/encrypted/write_using_password_read_using_key", test_encrypted_write_using_password_read_using_key);
 
    atexit (cleanup_globals);
 }
