@@ -28,8 +28,8 @@ const unsigned char aes_key[] = { 0x0A, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A
    bson_error_t error; \
    mongoc_gridfs_cnv_file_t *file; \
    const char *filename = file_name; \
-   mongoc_gridfs_file_opt_t opt = { NULL, filename };
-   char buf[4096];
+   mongoc_gridfs_file_opt_t opt = { NULL, filename }; \
+   char buf[4096]; \
    mongoc_iovec_t iov = { sizeof buf, buf };
 
 #define SETUP \
@@ -496,7 +496,6 @@ test_encrypted_write_using_password (void)
 
    /* white hello world with encryption enabled using password instead aes key */
    file = mongoc_gridfs_create_cnv_file (gridfs, &opt, MONGOC_CNV_ENCRYPT);
-   assert (file);
    assert (mongoc_gridfs_cnv_file_set_aes_key_from_password (file, pass, sizeof pass));
    write_hello_world_to_file (file);
 
@@ -534,7 +533,6 @@ test_encrypted_write_using_password_read_using_key (void)
 
    /* white hello world with encryption enabled using password instead aes key */
    file = mongoc_gridfs_create_cnv_file (gridfs, &opt, MONGOC_CNV_ENCRYPT);
-   assert (file);
    assert (mongoc_gridfs_cnv_file_set_aes_key_from_password (file, pass, sizeof pass));
    write_hello_world_to_file (file);
 
@@ -552,6 +550,122 @@ test_encrypted_write_using_password_read_using_key (void)
    assert (strcmp (err.message, "Encrypted or decrypted data is corrupted or wrong key\\password used") == 0);
 
    mongoc_gridfs_cnv_file_destroy (file);
+   TEARDOWN
+}
+
+
+static void
+test_compressed_and_encrypted_write_read (void)
+{
+   SETUP_DECLARATIONS ("test_compressed_and_encrypted_write_read")
+
+   SETUP
+
+   /* white hello world with encryption and compression enabled */
+   file = mongoc_gridfs_create_cnv_file (gridfs, &opt, MONGOC_CNV_ENCRYPT | MONGOC_CNV_COMPRESS);
+   assert (mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key));
+   write_hello_world_to_file (file);
+
+   /* read encrypted and compressed data */
+   file = mongoc_gridfs_find_one_cnv_by_filename (gridfs, filename, &error, MONGOC_CNV_DECRYPT | MONGOC_CNV_UNCOMPRESS);
+   assert (file);
+   assert (mongoc_gridfs_cnv_file_is_encrypted (file));
+   assert (mongoc_gridfs_cnv_file_is_compressed (file));
+   assert (mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key));
+
+   /* should match original */
+   assert (mongoc_gridfs_cnv_file_readv (file, &iov, 1, -1, 0) == sizeof hello_world);
+   assert (memcmp (hello_world, iov.iov_base, sizeof hello_world) == 0);
+
+   mongoc_gridfs_cnv_file_destroy (file);
+   TEARDOWN
+}
+
+
+static void
+test_compressed_and_encrypted_read_after_seek (void)
+{
+   SETUP_DECLARATIONS ("test_compressed_and_encrypted_read_after_seek")
+   const char pass[] = "12345678";
+   int64_t seek_delta = 3;
+   ssize_t nread;
+
+   SETUP
+
+   /* white hello world with encryption and compression enabled */
+   file = mongoc_gridfs_create_cnv_file (gridfs, &opt, MONGOC_CNV_ENCRYPT | MONGOC_CNV_COMPRESS);
+   assert (mongoc_gridfs_cnv_file_set_aes_key_from_password (file, pass, sizeof pass));
+   write_hello_world_to_file (file);
+
+   /* read encrypted and compressed data */
+   file = mongoc_gridfs_find_one_cnv_by_filename (gridfs, filename, &error, MONGOC_CNV_DECRYPT | MONGOC_CNV_UNCOMPRESS);
+   assert (file);
+   assert (mongoc_gridfs_cnv_file_is_encrypted (file));
+   assert (mongoc_gridfs_cnv_file_is_compressed (file));
+   assert (mongoc_gridfs_cnv_file_set_aes_key_from_password (file, pass, sizeof pass));
+
+   /* should match original with offset */
+   assert (mongoc_gridfs_cnv_file_seek (file, seek_delta, SEEK_CUR) == 0);
+   assert (mongoc_gridfs_cnv_file_seek (file, seek_delta, SEEK_CUR) == 0);
+   
+   nread = mongoc_gridfs_cnv_file_readv (file, &iov, 1, -1, 0);
+   assert (nread == sizeof hello_world - seek_delta * 2);
+   assert (memcmp (hello_world + seek_delta * 2, iov.iov_base, nread) == 0);
+
+   mongoc_gridfs_cnv_file_destroy (file);
+   TEARDOWN
+}
+
+
+static void
+test_compressed_and_encrypted_write_read_10mb (void)
+{
+   SETUP_DECLARATIONS ("test_compressed_and_encrypted_write_read_10mb")
+   const size_t DATA_LEN = 10 * 1024 * 1024;
+   size_t i;
+   char *data_buf = bson_malloc0 (DATA_LEN);
+
+   SETUP
+   fill_buf_with_rand_data (data_buf, DATA_LEN);
+
+   /* white data with encryption and compression enabled */
+   file = mongoc_gridfs_create_cnv_file (gridfs, &opt, MONGOC_CNV_ENCRYPT | MONGOC_CNV_COMPRESS);
+   assert (file);
+   assert (mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key));
+
+   iov.iov_len = sizeof buf;
+   for (i = 0; i < DATA_LEN; i += sizeof buf) {
+      iov.iov_base = data_buf + i;
+      assert (mongoc_gridfs_cnv_file_writev (file, &iov, 1, 0) >= 0);
+   }
+
+   assert (mongoc_gridfs_cnv_file_save (file));
+   mongoc_gridfs_cnv_file_destroy (file);
+
+   /* read encrypted and compressed data */
+   file = mongoc_gridfs_find_one_cnv_by_filename (gridfs, filename, &error, MONGOC_CNV_DECRYPT | MONGOC_CNV_UNCOMPRESS);
+   assert (file);
+   assert (mongoc_gridfs_cnv_file_is_encrypted (file));
+   assert (mongoc_gridfs_cnv_file_is_compressed (file));
+   assert (mongoc_gridfs_cnv_file_set_aes_key (file, aes_key, sizeof aes_key));
+
+   i = 0;
+   iov.iov_base = buf;
+   while (1) {
+      ssize_t nread;
+      iov.iov_len = sizeof buf;
+      nread = mongoc_gridfs_cnv_file_readv (file, &iov, 1, -1, 0);
+      assert (nread >= 0);
+      if (nread == 0)
+         break;
+      /* should match original */
+      assert (memcmp (data_buf + i, buf, nread) == 0);
+      i += nread;
+   }
+   assert (DATA_LEN == i);
+
+   mongoc_gridfs_cnv_file_destroy (file);
+   bson_free (data_buf);
    TEARDOWN
 }
 
@@ -581,6 +695,10 @@ test_gridfs_cnv_file_install (TestSuite *suite)
    TestSuite_Add (suite, "/Cnv_file/encrypted/integrity_check_failed", test_encrypted_integrity_check_failed);
    TestSuite_Add (suite, "/Cnv_file/encrypted/write_using_password", test_encrypted_write_using_password);
    TestSuite_Add (suite, "/Cnv_file/encrypted/write_using_password_read_using_key", test_encrypted_write_using_password_read_using_key);
+
+   TestSuite_Add (suite, "/Cnv_file/compressed_and_encrypted/write_read", test_compressed_and_encrypted_write_read);
+   TestSuite_Add (suite, "/Cnv_file/compressed_and_encrypted/read_after_seek", test_compressed_and_encrypted_read_after_seek);
+   TestSuite_Add (suite, "/Cnv_file/compressed_and_encrypted/write_read_10mb", test_compressed_and_encrypted_write_read_10mb);
 
    atexit (cleanup_globals);
 }

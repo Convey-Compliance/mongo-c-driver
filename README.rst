@@ -2,18 +2,40 @@
 mongo-c-driver
 ==============
 
-Convey compress feature
+Convey mongoc_grigfs_cnv_file_t wrapper
 =====
 
-This feature allows to compress\decompress blocks of data using zlib while writing\reading gridfs file. 
-All new functionality available via mongoc_grigfs_cnv_file_t, it uses mongoc_grigfs_file_t internally(object composition)
-See example-cnv-gridfs example to see how to read\write files using cnv gridfs file(example similar to original example-gridfs).
+The new functionality provided by this fork allows to compress/uncompress and/or encrypt/decrypt file on the fly while reading/writing from the mongo. 
+Original src mongoc-grigfs-file.c modified to provide hooks: right before chunk write in mongo collection and right after read.
+mongoc_grigfs_cnv_file_t wrapper uses mongoc_grigfs_file_t internally(object composition) so interface is the same.
+
+Additional functions provided:
+
+* mongoc_gridfs_cnv_file_is_compressed()
+* mongoc_gridfs_cnv_file_is_encrypted()
+* mongoc_gridfs_cnv_file_get_compressed_length()
+* mongoc_gridfs_cnv_file_set_aes_key()
+* mongoc_gridfs_cnv_file_set_aes_key_from_password()
+
+Instance of mongoc_grigfs_cnv_file_t can be created using functions (similar to mongoc_grigfs_file_t creation functions):
+
+* mongoc_gridfs_create_cnv_file_from_stream()
+* mongoc_gridfs_create_cnv_file()
+* mongoc_gridfs_find_one_cnv()
+* mongoc_gridfs_find_one_cnv_by_filename()
+* mongoc_gridfs_cnv_file_from_file() // additional function to create from mongoc_grigfs_file_t
+
+this functions accepts additional flags parameter to specify compress/uncompress/encrypt/decrypt behavior
+
+See example-cnv-gridfs example to see how to read/write files using cnv gridfs file(example similar to original example-gridfs).
 Tests for new functionality available in test-mongoc-gridfs-cnv-file.c
-Original src of mongoc-grigfs-file modified to provide hooks: right before chunk write in mongo collection and right after read.
-Compressing each chunk gives ability to seek over compressed file like it isn't compressed. 
+
+zlib is used for compress/decompress, Brian Gladman's AES implementation(with EAX mode) used for encrypt/decpypt
+
+Data encrypted/compressed chunk-by-chunk, so actual chunk size can be greater or less than file.chunk_size, however because mongoc logic uses file.chunk_size(not actual written chunk size) to calculate offset, seek() function works(even if file size changed due to compression) over compressed file like it's not compressed.
 Notice that length of compressed file is saved as original(uncompressed) file length, compressed length saved in metadata.
-Additionally mongoc_gridfs_cnv_file_is_compressed() and mongoc_gridfs_cnv_file_get_compressed_length() provided.
 Because of tricks with file size and chunks size and implementation of mongoc_grigfs_cnv_file_t that depends on those sizes, it's not possible to read compressed file using mongoc_grigfs_cnv_file_t, you should use mongoc_grigfs_cnv_file_t with MONGOC_CNV_NONE flag.
+
 
 About
 =====

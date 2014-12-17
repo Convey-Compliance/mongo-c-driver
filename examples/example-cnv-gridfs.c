@@ -20,6 +20,7 @@ int main (int argc, char *argv[])
    mongoc_iovec_t iov;
    const char * filename;
    const char * command;
+   const char pass[] = "my secret";
 
    if (argc < 2) {
       fprintf(stderr, "usage - %s command ...\n", argv[0]);
@@ -49,8 +50,9 @@ int main (int argc, char *argv[])
          fprintf(stderr, "usage - %s read filename\n", argv[0]);
          return 1;
       }
-      file = mongoc_gridfs_find_one_cnv_by_filename(gridfs, filename, &error, MONGOC_CNV_NONE);
+      file = mongoc_gridfs_find_one_cnv_by_filename(gridfs, filename, &error, MONGOC_CNV_UNCOMPRESS | MONGOC_CNV_DECRYPT);
       assert(file);
+      mongoc_gridfs_cnv_file_set_aes_key_from_password (file, pass, sizeof pass);
 
       fstream = mongoc_stream_file_new_for_path (argv [2], O_CREAT | O_WRONLY | O_TRUNC, _S_IWRITE | _S_IREAD);
       assert (fstream);
@@ -87,11 +89,22 @@ int main (int argc, char *argv[])
 
       bson_destroy (&query);
 
+      printf("file name\t"
+             "is compressed\t"
+             "is encrypted\t"
+             "size\t"
+             "compressed size\n");
       while ((f = mongoc_gridfs_file_list_next (list))) {
-         const char * name = mongoc_gridfs_file_get_filename(f);
-         printf("%s\n", name ? name : "?");
+         file = mongoc_gridfs_cnv_file_from_file (f, MONGOC_CNV_NONE);
 
-         mongoc_gridfs_file_destroy (f);
+         printf("%s\t\t%c\t\t%c\t\t%" PRId64 "\t%" PRId64 "\n", 
+                mongoc_gridfs_cnv_file_get_filename (file),
+                mongoc_gridfs_cnv_file_is_compressed (file) ? 'Y' : 'N',
+                mongoc_gridfs_cnv_file_is_encrypted (file) ? 'Y' : 'N',
+                mongoc_gridfs_cnv_file_get_length (file),
+                mongoc_gridfs_cnv_file_get_compressed_length (file));
+
+         mongoc_gridfs_cnv_file_destroy (file);
       }
 
       mongoc_gridfs_file_list_destroy (list);
@@ -108,8 +121,9 @@ int main (int argc, char *argv[])
 
       opt.filename = filename;
 
-      file = mongoc_gridfs_create_cnv_file (gridfs, &opt, MONGOC_CNV_NONE);
+      file = mongoc_gridfs_create_cnv_file (gridfs, &opt, MONGOC_CNV_ENCRYPT | MONGOC_CNV_COMPRESS);
       assert (file);
+      if (!mongoc_gridfs_cnv_file_set_aes_key_from_password (file, pass, sizeof pass));
 
       for (;; ) {
         r = mongoc_stream_read (fstream, iov.iov_base, sizeof buf,
@@ -120,11 +134,15 @@ int main (int argc, char *argv[])
             break;
         }
         iov.iov_len = (u_long)r;
-        mongoc_gridfs_cnv_file_writev (file, &iov, 1, 0);
+        r = mongoc_gridfs_cnv_file_writev (file, &iov, 1, 0);
+        assert (r > 0);
       }
 
       mongoc_stream_destroy (fstream);
-      assert (mongoc_gridfs_cnv_file_save (file));
+      if (!mongoc_gridfs_cnv_file_save (file)) {
+         fprintf(stderr, "failed to save cnv file");
+         return 1;
+      }
       mongoc_gridfs_cnv_file_destroy (file);
    } else {
       fprintf(stderr, "Unknown command");
