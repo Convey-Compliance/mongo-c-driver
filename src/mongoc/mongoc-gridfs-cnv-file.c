@@ -110,10 +110,12 @@ load_metadata (mongoc_gridfs_cnv_file_t *cnv_file)
 
    if (bson_iter_init_find (&it, metadata, MONGOC_CNV_GRIDFS_FILE_COMPRESSED_LEN))
       cnv_file->compressed_length = bson_iter_int64 (&it);
-   if (!(cnv_file->flags & MONGOC_CNV_UNCOMPRESS) && mongoc_gridfs_cnv_file_is_compressed (cnv_file))
+   if (!(cnv_file->flags & MONGOC_CNV_UNCOMPRESS) && mongoc_gridfs_cnv_file_is_compressed (cnv_file)) {
       /* need to set size to be actual size in case reading compressed file without uncompress
          cause implementation depends on this */
+      cnv_file->length_fix = cnv_file->file->length - cnv_file->compressed_length;
       cnv_file->file->length = cnv_file->compressed_length;
+   }
    if (bson_iter_init_find (&it, metadata, MONGOC_CNV_GRIDFS_FILE_AES_IV)) {
       const uint8_t *aes_initialization_vector;
       uint32_t len;
@@ -197,6 +199,12 @@ mongoc_gridfs_cnv_file_t *mongoc_gridfs_find_one_cnv_by_filename (mongoc_gridfs_
                                                                   mongoc_gridfs_cnv_file_flags_t  flags)
 {
    return mongoc_gridfs_cnv_file_new (mongoc_gridfs_find_one_by_filename (gridfs, filename, error), flags);
+}
+
+mongoc_gridfs_cnv_file_t *mongoc_gridfs_cnv_file_from_file (mongoc_gridfs_file_t           *file,
+                                                            mongoc_gridfs_cnv_file_flags_t  flags)
+{
+   return mongoc_gridfs_cnv_file_new (file, flags);
 }
 
 

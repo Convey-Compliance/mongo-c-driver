@@ -35,8 +35,8 @@ struct _mongoc_gridfs_cnv_file_t
   mongoc_gridfs_cnv_file_flags_t flags;
   uint8_t                       *buf_for_compress;
   int64_t                        compressed_length;
-  uint32_t                       length_fix;
-  uint32_t                       read_length_fix;
+  int32_t                        length_fix;
+  int32_t                        read_length_fix;
   bool                           need_to_append_metadata;
   eax_ctx                        aes_ctx;
   bool                           aes_key_is_valid;
@@ -60,6 +60,9 @@ mongoc_gridfs_cnv_file_t *mongoc_gridfs_find_one_cnv                (mongoc_grid
 mongoc_gridfs_cnv_file_t *mongoc_gridfs_find_one_cnv_by_filename    (mongoc_gridfs_t                *gridfs,
                                                                      const char                     *filename,
                                                                      bson_error_t                   *error,
+                                                                     mongoc_gridfs_cnv_file_flags_t  flags);
+
+mongoc_gridfs_cnv_file_t *mongoc_gridfs_cnv_file_from_file          (mongoc_gridfs_file_t           *file,
                                                                      mongoc_gridfs_cnv_file_flags_t  flags);
 
 #define MONGOC_GRIDFS_CNV_FILE_STR_HEADER(name) \
