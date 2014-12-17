@@ -28,8 +28,8 @@ const unsigned char aes_key[] = { 0x0A, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A
    bson_error_t error; \
    mongoc_gridfs_cnv_file_t *file; \
    const char *filename = file_name; \
-   mongoc_gridfs_file_opt_t opt = { NULL, filename };
-   char buf[4096];
+   mongoc_gridfs_file_opt_t opt = { NULL, filename }; \
+   char buf[4096]; \
    mongoc_iovec_t iov = { sizeof buf, buf };
 
 #define SETUP \
