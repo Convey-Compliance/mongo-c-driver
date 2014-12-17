@@ -33,7 +33,7 @@ struct _mongoc_gridfs_cnv_file_t
 {
   mongoc_gridfs_file_t          *file;
   mongoc_gridfs_cnv_file_flags_t flags;
-  uint8_t                       *buf_for_compress;
+  uint8_t                       *buf_for_compress_encrypt;
   int64_t                        compressed_length;
   int32_t                        length_fix;
   int32_t                        read_length_fix;

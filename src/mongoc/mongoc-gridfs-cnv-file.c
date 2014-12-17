@@ -51,9 +51,9 @@ after_chunk_read (mongoc_gridfs_file_t *file, const uint8_t **data, uint32_t *le
    if (cnv_file->flags & MONGOC_CNV_UNCOMPRESS) {
       uint32_t uncompressed_len = file->chunk_size;
 
-      uncompress (cnv_file->buf_for_compress, &uncompressed_len, *data, *len);
+      uncompress (cnv_file->buf_for_compress_encrypt, &uncompressed_len, *data, *len);
 
-      *data = cnv_file->buf_for_compress;
+      *data = cnv_file->buf_for_compress_encrypt;
       *len = uncompressed_len;
    } else if (*len > (uint32_t)file->chunk_size) {
       /* this needed when we reading compressed file without uncompressing it
@@ -77,15 +77,16 @@ before_chunk_write (mongoc_gridfs_file_t *file, const uint8_t **data, uint32_t *
 
    if (cnv_file->flags & MONGOC_CNV_COMPRESS) {
       uint32_t compressed_len = compressBound (file->chunk_size);
-
-      compress2 (cnv_file->buf_for_compress, &compressed_len, *data, *len, Z_BEST_SPEED);
+      compress2 (cnv_file->buf_for_compress_encrypt, &compressed_len, *data, *len, Z_BEST_SPEED);
       cnv_file->compressed_length += compressed_len;
 
-      *data = cnv_file->buf_for_compress;
+      *data = cnv_file->buf_for_compress_encrypt;
       *len = compressed_len;
    }
    if (cnv_file->flags & MONGOC_CNV_ENCRYPT) {
-      eax_encrypt ((uint8_t *)*data, *len, &cnv_file->aes_ctx);
+      memcpy (cnv_file->buf_for_compress_encrypt, *data, *len);
+      eax_encrypt (cnv_file->buf_for_compress_encrypt, *len, &cnv_file->aes_ctx);
+      *data = cnv_file->buf_for_compress_encrypt;
       cnv_file->is_encrypted = true;
    }
    if (cnv_file->need_to_append_metadata) {
@@ -146,8 +147,12 @@ mongoc_gridfs_cnv_file_new (mongoc_gridfs_file_t *file, mongoc_gridfs_cnv_file_f
    cnv_file->compressed_length = 0;
    cnv_file->length_fix = 0;
    cnv_file->need_to_append_metadata = false;
-   cnv_file->buf_for_compress = cnv_file->flags & MONGOC_CNV_COMPRESS || cnv_file->flags & MONGOC_CNV_UNCOMPRESS ?
-     bson_malloc0 (compressBound (file->chunk_size)) : NULL;
+   if (cnv_file->flags & MONGOC_CNV_COMPRESS ||
+       cnv_file->flags & MONGOC_CNV_UNCOMPRESS ||
+       cnv_file->flags & MONGOC_CNV_ENCRYPT)
+      cnv_file->buf_for_compress_encrypt = bson_malloc0 (compressBound (file->chunk_size));
+   else
+      cnv_file->buf_for_compress_encrypt = NULL;
    cnv_file->file->chunk_callbacks_custom_data = cnv_file;
    mongoc_gridfs_file_set_chunk_callbacks (file, &callbacks);
 
@@ -244,7 +249,7 @@ mongoc_gridfs_cnv_file_destroy (mongoc_gridfs_cnv_file_t *file)
 {
    mongoc_gridfs_file_destroy (file->file);
    if(file->flags & MONGOC_CNV_COMPRESS || file->flags & MONGOC_CNV_UNCOMPRESS)
-      bson_free (file->buf_for_compress);
+      bson_free (file->buf_for_compress_encrypt);
    if(file->flags & MONGOC_CNV_ENCRYPT || file->flags & MONGOC_CNV_DECRYPT)
       eax_end (&file->aes_ctx);
    bson_free (file);
