@@ -89,11 +89,11 @@ test_compressed_write (void)
    assert (bson_iter_init_find (&it, mongoc_gridfs_cnv_file_get_metadata (file), "compressed_len"));
    assert (sizeof compressed_hello_world == bson_iter_int64 (&it));
 
-   /* length should be same as compressed length */
+   /* check properties */
    assert (mongoc_gridfs_cnv_file_is_compressed (file));
    assert (!mongoc_gridfs_cnv_file_is_encrypted (file));
-   assert (mongoc_gridfs_cnv_file_get_length (file) == sizeof compressed_hello_world);
-   assert (mongoc_gridfs_cnv_file_get_compressed_length (file ) == sizeof compressed_hello_world);
+   assert (mongoc_gridfs_cnv_file_get_length (file) == sizeof hello_world);
+   assert (mongoc_gridfs_cnv_file_get_compressed_length (file) == sizeof compressed_hello_world);
 
    /* check written file is compressed */
    assert (mongoc_gridfs_cnv_file_readv (file, &iov, 1, -1, 0) == sizeof compressed_hello_world);
@@ -200,7 +200,7 @@ test_compressed_write_read_10mb (void)
    assert (mongoc_gridfs_cnv_file_is_compressed (file));
    compressed_len = mongoc_gridfs_cnv_file_get_compressed_length (file);
    assert (compressed_len == expected_compressed_len);
-   assert (mongoc_gridfs_cnv_file_get_length (file) == compressed_len);
+   assert (mongoc_gridfs_cnv_file_get_length (file) == DATA_LEN);
    compressed_buf = bson_malloc0 ((size_t)compressed_len);
    iov.iov_len = (u_long)compressed_len;
    iov.iov_base = compressed_buf;

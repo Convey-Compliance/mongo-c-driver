@@ -113,7 +113,7 @@ load_metadata (mongoc_gridfs_cnv_file_t *cnv_file)
    if (!(cnv_file->flags & MONGOC_CNV_UNCOMPRESS) && mongoc_gridfs_cnv_file_is_compressed (cnv_file)) {
       /* need to set size to be actual size in case reading compressed file without uncompress
          cause implementation depends on this */
-      cnv_file->length_fix = cnv_file->file->length - cnv_file->compressed_length;
+      cnv_file->length_fix = (int32_t)(cnv_file->file->length - cnv_file->compressed_length);
       cnv_file->file->length = cnv_file->compressed_length;
    }
    if (bson_iter_init_find (&it, metadata, MONGOC_CNV_GRIDFS_FILE_AES_IV)) {
@@ -419,7 +419,7 @@ mongoc_gridfs_cnv_file_set_aes_key_from_password (mongoc_gridfs_cnv_file_t *file
 {
    #define AUTOGEN_AES_KEY_SIZE 32
    uint8_t key[AUTOGEN_AES_KEY_SIZE];
-   static const uint64_t SRCYPT_n_that_takes_avg_sec_to_generate_key = 4096;
+   static const size_t SRCYPT_n_that_takes_avg_sec_to_generate_key = 4096;
 
    if (file->flags & MONGOC_CNV_ENCRYPT)
       libscrypt_salt_gen (file->salt, sizeof file->salt);
