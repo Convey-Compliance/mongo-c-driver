@@ -89,6 +89,7 @@ test_libmongoc_SOURCES = \
 	tests/test-mongoc-queue.c \
 	tests/test-mongoc-read-prefs.c \
 	tests/test-mongoc-rpc.c \
+	tests/test-mongoc-socket.c \
 	tests/test-mongoc-stream.c \
 	tests/test-mongoc-uri.c \
 	tests/test-mongoc-write-concern.c \
@@ -135,7 +136,7 @@ endif
 	done
 
 valgrind: $(TEST_PROGS)
-	$(LIBTOOL) --mode=execute valgrind --leak-check=full ./test-libmongoc -f -p
+	$(LIBTOOL) --mode=execute valgrind --leak-check=full --suppressions=$(srcdir)/valgrind.suppressions ./test-libmongoc -f -p
 
 if OS_LINUX
 abicheck:

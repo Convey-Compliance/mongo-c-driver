@@ -32,7 +32,7 @@ BSON_BEGIN_DECLS
 #ifdef _WIN32
 typedef struct
 {
-   u_long  iov_len;
+   size_t  iov_len;
    char   *iov_base;
 } mongoc_iovec_t;
 #else

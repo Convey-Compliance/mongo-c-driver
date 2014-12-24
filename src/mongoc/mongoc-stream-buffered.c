@@ -229,7 +229,7 @@ mongoc_stream_buffered_readv (mongoc_stream_t *stream,       /* IN */
       memcpy(iov[i].iov_base,
              buffered->buffer.data + buffered->buffer.off,
              iov[i].iov_len);
-      buffered->buffer.off += iov[i].iov_len;
+      buffered->buffer.off += (off_t)iov[i].iov_len;
       buffered->buffer.len -= iov[i].iov_len;
    }
 
@@ -241,6 +241,15 @@ static mongoc_stream_t *
 _mongoc_stream_buffered_get_base_stream (mongoc_stream_t *stream) /* IN */
 {
    return ((mongoc_stream_buffered_t *)stream)->base_stream;
+}
+
+
+static bool
+_mongoc_stream_buffered_check_closed (mongoc_stream_t *stream) /* IN */
+{
+   mongoc_stream_buffered_t *buffered = (mongoc_stream_buffered_t *)stream;
+   bson_return_val_if_fail(stream, -1);
+   return mongoc_stream_check_closed (buffered->base_stream);
 }
 
 
@@ -283,6 +292,7 @@ mongoc_stream_buffered_new (mongoc_stream_t *base_stream, /* IN */
    stream->stream.writev = mongoc_stream_buffered_writev;
    stream->stream.readv = mongoc_stream_buffered_readv;
    stream->stream.get_base_stream = _mongoc_stream_buffered_get_base_stream;
+   stream->stream.check_closed = _mongoc_stream_buffered_check_closed;
 
    stream->base_stream = base_stream;
 

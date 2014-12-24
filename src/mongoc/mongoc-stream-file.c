@@ -117,7 +117,7 @@ _mongoc_stream_file_readv (mongoc_stream_t *stream,       /* IN */
    ENTRY;
 
    for (i = 0; i < iovcnt; i++) {
-      nread = _read (file->fd, iov [i].iov_base, iov [i].iov_len);
+      nread = _read (file->fd, iov [i].iov_base, (unsigned int)iov [i].iov_len);
       if (nread < 0) {
          RETURN (ret ? ret : -1);
       } else if (nread == 0) {
@@ -153,7 +153,7 @@ _mongoc_stream_file_writev (mongoc_stream_t *stream,       /* IN */
    size_t i;
 
    for (i = 0; i < iovcnt; i++) {
-      nwrite = _write (file->fd, iov [i].iov_base, iov [i].iov_len);
+      nwrite = _write (file->fd, iov [i].iov_base, (unsigned int)iov [i].iov_len);
       if (nwrite != iov [i].iov_len) {
          return ret ? ret : -1;
       }
@@ -164,6 +164,13 @@ _mongoc_stream_file_writev (mongoc_stream_t *stream,       /* IN */
 #else
    return writev (file->fd, iov, (int) iovcnt);
 #endif
+}
+
+
+static bool
+_mongoc_stream_file_check_closed (mongoc_stream_t *stream) /* IN */
+{
+   return false;
 }
 
 
@@ -181,6 +188,7 @@ mongoc_stream_file_new (int fd) /* IN */
    stream->vtable.flush = _mongoc_stream_file_flush;
    stream->vtable.readv = _mongoc_stream_file_readv;
    stream->vtable.writev = _mongoc_stream_file_writev;
+   stream->vtable.check_closed = _mongoc_stream_file_check_closed;
    stream->fd = fd;
 
    return (mongoc_stream_t *)stream;

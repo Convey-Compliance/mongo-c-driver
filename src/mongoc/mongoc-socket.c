@@ -491,6 +491,8 @@ mongoc_socket_connect (mongoc_socket_t       *sock,      /* IN */
                            (char *)&optval, &optlen);
          if ((ret == 0) && (optval == 0)) {
             RETURN (0);
+         } else {
+            errno = sock->errno_ = optval;
          }
       }
       RETURN (-1);
@@ -818,7 +820,7 @@ _mongoc_socket_try_sendv_slow (mongoc_socket_t *sock,   /* IN */
    BSON_ASSERT (iovcnt);
 
    for (i = 0; i < iovcnt; i++) {
-      wrote = send (sock->sd, iov [i].iov_base, iov [i].iov_len, 0);
+      wrote = send (sock->sd, iov [i].iov_base, (int)iov [i].iov_len, 0);
       _mongoc_socket_capture_errno (sock);
 #ifdef _WIN32
       if (wrote == SOCKET_ERROR) {
@@ -1066,4 +1068,72 @@ mongoc_socket_getnameinfo (mongoc_socket_t *sock) /* IN */
    }
 
    RETURN (NULL);
+}
+
+
+bool
+mongoc_socket_check_closed (mongoc_socket_t *sock) /* IN */
+{
+   bool closed = false;
+   char buf [1];
+   ssize_t r;
+
+   if (_mongoc_socket_wait (sock->sd, POLLIN, 0)) {
+      sock->errno_ = 0;
+
+      r = recv (sock->sd, buf, 1, MSG_PEEK);
+
+      if (r < 0) {
+         _mongoc_socket_capture_errno (sock);
+      }
+
+      if (r < 1) {
+         closed = true;
+      }
+   }
+
+   return closed;
+}
+
+/*
+ *
+ *--------------------------------------------------------------------------
+ *
+ * mongoc_socket_inet_ntop --
+ *
+ *       Convert the ip from addrinfo into a c string.
+ *
+ * Returns:
+ *       The value is returned into 'buffer'. The memory has to be allocated
+ *       by the caller
+ *
+ * Side effects:
+ *       None.
+ *
+ *--------------------------------------------------------------------------
+ */
+
+void
+mongoc_socket_inet_ntop (struct addrinfo *rp,        /* IN */
+                         char            *buf,       /* INOUT */
+                         size_t           buflen)    /* IN */
+{
+   void *ptr;
+   char tmp[256];
+
+   switch (rp->ai_family) {
+   case AF_INET:
+      ptr = &((struct sockaddr_in *)rp->ai_addr)->sin_addr;
+      inet_ntop (rp->ai_family, ptr, tmp, sizeof (tmp));
+      bson_snprintf (buf, buflen, "ipv4 %s", tmp);
+      break;
+   case AF_INET6:
+      ptr = &((struct sockaddr_in6 *)rp->ai_addr)->sin6_addr;
+      inet_ntop (rp->ai_family, ptr, tmp, sizeof (tmp));
+      bson_snprintf (buf, buflen, "ipv6 %s", tmp);
+      break;
+   default:
+      bson_snprintf (buf, buflen, "unknown ip %d", rp->ai_family);
+      break;
+   }
 }
