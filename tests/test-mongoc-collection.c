@@ -190,6 +190,21 @@ test_insert_bulk (void)
    count = mongoc_collection_count (collection, MONGOC_QUERY_NONE, &q, 0, 0, NULL, &error);
    ASSERT (count == 6);
 
+   /* test validate */
+   for (i = 0; i < 10; i++) {
+      bson_destroy (&b[i]);
+      bson_init (&b[i]);
+      BSON_APPEND_INT32 (&b[i], "$invalid_dollar_prefixed_name", i);
+      bptr[i] = &b[i];
+   }
+   BEGIN_IGNORE_DEPRECATIONS;
+   r = mongoc_collection_insert_bulk (collection, MONGOC_INSERT_NONE,
+                                      (const bson_t **)bptr, 10, NULL, &error);
+   END_IGNORE_DEPRECATIONS;
+   ASSERT (!r);
+   ASSERT (error.domain == MONGOC_ERROR_BSON);
+   ASSERT (error.code == MONGOC_ERROR_BSON_INVALID);
+
    bson_destroy(&q);
    for (i = 0; i < 10; i++) {
       bson_destroy(&b[i]);
@@ -506,6 +521,163 @@ test_index (void)
    mongoc_client_destroy(client);
 }
 
+static void
+test_index_compound (void)
+{
+   mongoc_collection_t *collection;
+   mongoc_database_t *database;
+   mongoc_client_t *client;
+   mongoc_index_opt_t opt;
+   bson_error_t error;
+   bool r;
+   bson_t keys;
+
+   mongoc_index_opt_init(&opt);
+
+   client = mongoc_client_new(gTestUri);
+   ASSERT (client);
+
+   database = get_test_database (client);
+   ASSERT (database);
+
+   collection = get_test_collection (client, "test_index_compound");
+   ASSERT (collection);
+
+   bson_init(&keys);
+   bson_append_int32(&keys, "hello", -1, 1);
+   bson_append_int32(&keys, "world", -1, -1);
+   r = mongoc_collection_create_index(collection, &keys, &opt, &error);
+   ASSERT (r);
+
+   r = mongoc_collection_create_index(collection, &keys, &opt, &error);
+   ASSERT (r);
+
+   r = mongoc_collection_drop_index(collection, "hello_1_world_-1", &error);
+   ASSERT (r);
+
+   bson_destroy(&keys);
+
+   r = mongoc_collection_drop (collection, &error);
+   ASSERT (r);
+
+   mongoc_collection_destroy(collection);
+   mongoc_database_destroy(database);
+   mongoc_client_destroy(client);
+}
+
+static void
+test_index_geo (void)
+{
+   mongoc_collection_t *collection;
+   mongoc_database_t *database;
+   mongoc_client_t *client;
+   mongoc_index_opt_t opt;
+   mongoc_index_opt_geo_t geo_opt;
+   bson_error_t error;
+   bool r;
+   bson_t keys;
+
+   mongoc_index_opt_init(&opt);
+   mongoc_index_opt_geo_init(&geo_opt);
+
+   client = mongoc_client_new(gTestUri);
+   ASSERT (client);
+
+   database = get_test_database (client);
+   ASSERT (database);
+
+   collection = get_test_collection (client, "test_geo_index");
+   ASSERT (collection);
+
+   /* Create a basic 2d index */
+   bson_init(&keys);
+   BSON_APPEND_UTF8(&keys, "location", "2d");
+   r = mongoc_collection_create_index(collection, &keys, &opt, &error);
+   ASSERT (r);
+
+   r = mongoc_collection_drop_index(collection, "location_2d", &error);
+   ASSERT (r);
+
+   /* Create a 2d index with bells and whistles */
+   bson_init(&keys);
+   BSON_APPEND_UTF8(&keys, "location", "2d");
+
+   geo_opt.twod_location_min = -123;
+   geo_opt.twod_location_max = +123;
+   geo_opt.twod_bits_precision = 30;
+   opt.geo_options = &geo_opt;
+
+   if (client->cluster.nodes [0].max_wire_version > 0) {
+      r = mongoc_collection_create_index(collection, &keys, &opt, &error);
+         ASSERT (r);
+
+      r = mongoc_collection_drop_index(collection, "location_2d", &error);
+      ASSERT (r);
+   }
+
+   /* Create a Haystack index */
+   bson_init(&keys);
+   BSON_APPEND_UTF8(&keys, "location", "geoHaystack");
+   BSON_APPEND_INT32(&keys, "category", 1);
+
+   mongoc_index_opt_geo_init(&geo_opt);
+   geo_opt.haystack_bucket_size = 5;
+   opt.geo_options = &geo_opt;
+
+   if (client->cluster.nodes [0].max_wire_version > 0) {
+      r = mongoc_collection_create_index(collection, &keys, &opt, &error);
+      ASSERT (r);
+
+      r = mongoc_collection_drop_index(collection, "location_geoHaystack_category_1", &error);
+      ASSERT (r);
+   }
+
+   mongoc_collection_destroy(collection);
+   mongoc_database_destroy(database);
+   mongoc_client_destroy(client);
+}
+
+static void
+test_index_storage (void)
+{
+   mongoc_collection_t *collection;
+   mongoc_database_t *database;
+   mongoc_client_t *client;
+   mongoc_index_opt_t opt;
+   mongoc_index_opt_wt_t wt_opt;
+   bson_error_t error;
+   bool r;
+   bson_t keys;
+
+   mongoc_index_opt_init (&opt);
+   mongoc_index_opt_wt_init (&wt_opt);
+
+   client = mongoc_client_new (gTestUri);
+   ASSERT (client);
+
+   database = get_test_database (client);
+   ASSERT (database);
+
+   collection = get_test_collection (client, "test_storage_index");
+   ASSERT (collection);
+
+   /* Create a simple index */
+   bson_init (&keys);
+   bson_append_int32 (&keys, "hello", -1, 1);
+
+   /* Add storage option to the index */
+   wt_opt.base.type = MONGOC_INDEX_STORAGE_OPT_WIREDTIGER;
+   wt_opt.config_str = "block_compressor=zlib";
+
+   opt.storage_options = (mongoc_index_opt_storage_t *)&wt_opt;
+
+   r = mongoc_collection_create_index (collection, &keys, &opt, &error);
+   ASSERT (r);
+
+   mongoc_collection_destroy (collection);
+   mongoc_database_destroy (database);
+   mongoc_client_destroy (client);
+}
 
 static void
 test_count (void)
@@ -534,6 +706,43 @@ test_count (void)
 
    mongoc_collection_destroy(collection);
    mongoc_client_destroy(client);
+}
+
+
+static void
+test_count_with_opts (void)
+{
+   mongoc_collection_t *collection;
+   mongoc_client_t *client;
+   bson_error_t error;
+   int64_t count;
+   bson_t b;
+   bson_t opts;
+
+   client = mongoc_client_new (gTestUri);
+   ASSERT (client);
+
+   collection = mongoc_client_get_collection (client, "test", "test");
+   ASSERT (collection);
+
+   bson_init (&opts);
+
+   BSON_APPEND_UTF8 (&opts, "hint", "_id_");
+
+   bson_init (&b);
+   count = mongoc_collection_count_with_opts (collection, MONGOC_QUERY_NONE, &b,
+                                              0, 0, &opts, NULL, &error);
+   bson_destroy (&b);
+   bson_destroy (&opts);
+
+   if (count == -1) {
+      MONGOC_WARNING ("%s\n", error.message);
+   }
+
+   ASSERT (count != -1);
+
+   mongoc_collection_destroy (collection);
+   mongoc_client_destroy (client);
 }
 
 
@@ -1017,6 +1226,138 @@ test_command_fq (void)
    mongoc_client_destroy (client);
 }
 
+static void
+test_get_index_info (void)
+{
+   mongoc_collection_t *collection;
+   mongoc_client_t *client;
+   mongoc_index_opt_t opt1;
+   mongoc_index_opt_t opt2;
+   bson_error_t error = { 0 };
+   mongoc_cursor_t *cursor;
+   const bson_t *indexinfo;
+   bson_t indexkey1;
+   bson_t indexkey2;
+   bson_t dummy = BSON_INITIALIZER;
+   bson_iter_t idx_spec_iter;
+   bson_iter_t idx_spec_iter_copy;
+   bool r;
+   const char *cur_idx_name;
+   char *idx1_name = NULL;
+   char *idx2_name = NULL;
+   const char *id_idx_name = "_id_";
+   int num_idxs = 0;
+
+   client = mongoc_client_new (gTestUri);
+   ASSERT (client);
+
+   collection = get_test_collection (client, "test_get_index_info");
+   ASSERT (collection);
+
+   /*
+    * Try it on a collection that doesn't exist.
+    */
+   cursor = mongoc_collection_find_indexes (collection, &error);
+
+   ASSERT (cursor);
+   ASSERT (!error.domain);
+   ASSERT (!error.code);
+
+   ASSERT (!mongoc_cursor_next( cursor, &indexinfo ));
+
+   mongoc_cursor_destroy (cursor);
+
+   /* insert a dummy document so that the collection actually exists */
+   r = mongoc_collection_insert (collection, MONGOC_INSERT_NONE, &dummy, NULL,
+                                 &error);
+   ASSERT (r);
+
+   /* Try it on a collection with no secondary indexes.
+    * We should just get back the index on _id.
+    */
+   cursor = mongoc_collection_find_indexes (collection, &error);
+   ASSERT (cursor);
+   ASSERT (!error.domain);
+   ASSERT (!error.code);
+
+   while (mongoc_cursor_next (cursor, &indexinfo)) {
+      if (bson_iter_init (&idx_spec_iter, indexinfo) &&
+          bson_iter_find (&idx_spec_iter, "name") &&
+          BSON_ITER_HOLDS_UTF8 (&idx_spec_iter) &&
+          (cur_idx_name = bson_iter_utf8 (&idx_spec_iter, NULL))) {
+         assert (0 == strcmp (cur_idx_name, id_idx_name));
+         ++num_idxs;
+      } else {
+         assert (false);
+      }
+   }
+
+   assert (1 == num_idxs);
+
+   mongoc_cursor_destroy (cursor);
+
+   num_idxs = 0;
+   indexinfo = NULL;
+
+   bson_init (&indexkey1);
+   BSON_APPEND_INT32 (&indexkey1, "rasberry", 1);
+   idx1_name = mongoc_collection_keys_to_index_string (&indexkey1);
+   mongoc_index_opt_init (&opt1);
+   opt1.background = true;
+   r = mongoc_collection_create_index (collection, &indexkey1, &opt1, &error);
+   ASSERT (r);
+
+   bson_init (&indexkey2);
+   BSON_APPEND_INT32 (&indexkey2, "snozzberry", 1);
+   idx2_name = mongoc_collection_keys_to_index_string (&indexkey2);
+   mongoc_index_opt_init (&opt2);
+   opt2.unique = true;
+   r = mongoc_collection_create_index (collection, &indexkey2, &opt2, &error);
+   ASSERT (r);
+
+   /*
+    * Now we try again after creating two indexes.
+    */
+   cursor = mongoc_collection_find_indexes (collection, &error);
+   ASSERT (cursor);
+   ASSERT (!error.domain);
+   ASSERT (!error.code);
+
+   while (mongoc_cursor_next (cursor, &indexinfo)) {
+      if (bson_iter_init (&idx_spec_iter, indexinfo) &&
+          bson_iter_find (&idx_spec_iter, "name") &&
+          BSON_ITER_HOLDS_UTF8 (&idx_spec_iter) &&
+          (cur_idx_name = bson_iter_utf8 (&idx_spec_iter, NULL))) {
+         if (0 == strcmp (cur_idx_name, idx1_name)) {
+            /* need to use the copy of the iter since idx_spec_iter may have gone
+             * past the key we want */
+            ASSERT (bson_iter_init_find (&idx_spec_iter_copy, indexinfo, "background"));
+            ASSERT (BSON_ITER_HOLDS_BOOL (&idx_spec_iter_copy));
+            ASSERT (bson_iter_bool (&idx_spec_iter_copy));
+         } else if (0 == strcmp (cur_idx_name, idx2_name)) {
+            ASSERT (bson_iter_init_find (&idx_spec_iter_copy, indexinfo, "unique"));
+            ASSERT (BSON_ITER_HOLDS_BOOL (&idx_spec_iter_copy));
+            ASSERT (bson_iter_bool (&idx_spec_iter_copy));
+         } else {
+            ASSERT ((0 == strcmp (cur_idx_name, id_idx_name)));
+         }
+
+         ++num_idxs;
+      } else {
+         assert (false);
+      }
+   }
+
+   assert (3 == num_idxs);
+
+   mongoc_cursor_destroy (cursor);
+
+   bson_free (idx1_name);
+   bson_free (idx2_name);
+
+   mongoc_collection_destroy (collection);
+   mongoc_client_destroy (client);
+}
 
 static void
 cleanup_globals (void)
@@ -1034,10 +1375,14 @@ test_collection_install (TestSuite *suite)
    TestSuite_Add (suite, "/Collection/insert", test_insert);
    TestSuite_Add (suite, "/Collection/save", test_save);
    TestSuite_Add (suite, "/Collection/index", test_index);
+   TestSuite_Add (suite, "/Collection/index_compound", test_index_compound);
+   TestSuite_Add (suite, "/Collection/index_geo", test_index_geo);
+   TestSuite_Add (suite, "/Collection/index_storage", test_index_storage);
    TestSuite_Add (suite, "/Collection/regex", test_regex);
    TestSuite_Add (suite, "/Collection/update", test_update);
    TestSuite_Add (suite, "/Collection/remove", test_remove);
    TestSuite_Add (suite, "/Collection/count", test_count);
+   TestSuite_Add (suite, "/Collection/count_with_opts", test_count_with_opts);
    TestSuite_Add (suite, "/Collection/drop", test_drop);
    TestSuite_Add (suite, "/Collection/aggregate", test_aggregate);
    TestSuite_Add (suite, "/Collection/validate", test_validate);
@@ -1047,6 +1392,7 @@ test_collection_install (TestSuite *suite)
    TestSuite_Add (suite, "/Collection/large_return", test_large_return);
    TestSuite_Add (suite, "/Collection/many_return", test_many_return);
    TestSuite_Add (suite, "/Collection/command_fully_qualified", test_command_fq);
+   TestSuite_Add (suite, "/Collection/get_index_info", test_get_index_info);
 
    atexit (cleanup_globals);
 }

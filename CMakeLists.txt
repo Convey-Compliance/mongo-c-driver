@@ -12,10 +12,10 @@ include(FindBSON REQUIRED)
 set (SOURCE_DIR "${PROJECT_SOURCE_DIR}/")
 
 set (MONGOC_MAJOR_VERSION 1)
-set (MONGOC_MINOR_VERSION 0)
-set (MONGOC_MICRO_VERSION 1)
+set (MONGOC_MINOR_VERSION 1)
+set (MONGOC_MICRO_VERSION 0)
 set (MONGOC_API_VERSION 1.0)
-set (MONGOC_VERSION 1.0.1)
+set (MONGOC_VERSION 1.1.0-rc0)
 
 set (CPACK_RESOURCE_FILE_LICENSE "${SOURCE_DIR}/COPYING")
 set (CPACK_PACKAGE_VERSION_MAJOR ${MONGOC_MAJOR_VERSION})
@@ -129,9 +129,12 @@ set (HEADERS
 
 if (OPENSSL_FOUND)
    set (HEADERS ${HEADERS}
+      ${SOURCE_DIR}/src/mongoc/mongoc-rand.h
       ${SOURCE_DIR}/src/mongoc/mongoc-stream-tls.h
       ${SOURCE_DIR}/src/mongoc/mongoc-ssl.h)
    set (SOURCES ${SOURCES}
+      ${SOURCE_DIR}/src/mongoc/mongoc-rand.c
+      ${SOURCE_DIR}/src/mongoc/mongoc-scram.c
       ${SOURCE_DIR}/src/mongoc/mongoc-stream-tls.c
       ${SOURCE_DIR}/src/mongoc/mongoc-ssl.c
    )
@@ -250,6 +253,7 @@ add_test(NAME test-libmongoc COMMAND test-libmongoc -f -p)
 
 mongoc_add_example(example-gridfs TRUE ${SOURCE_DIR}/examples/example-gridfs.c)
 mongoc_add_example(example-client TRUE ${SOURCE_DIR}/examples/example-client.c)
+mongoc_add_example(example-scram TRUE ${SOURCE_DIR}/examples/example-scram.c)
 mongoc_add_example(mongoc-dump TRUE ${SOURCE_DIR}/examples/mongoc-dump.c)
 mongoc_add_example(mongoc-ping TRUE ${SOURCE_DIR}/examples/mongoc-ping.c)
 mongoc_add_example(mongoc-rpc-validate FALSE ${SOURCE_DIR}/examples/mongoc-rpc-validate.c)
