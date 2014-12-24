@@ -1062,7 +1062,7 @@ mongoc_collection_insert_bulk (mongoc_collection_t           *collection,
    }
 
    if (!(flags & MONGOC_INSERT_NO_VALIDATE)) {
-      int i;
+      uint32_t i;
 
       for (i = 0; i < n_documents; i++) {
          if (!bson_validate (documents[i],

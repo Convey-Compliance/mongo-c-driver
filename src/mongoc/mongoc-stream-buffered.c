@@ -229,7 +229,7 @@ mongoc_stream_buffered_readv (mongoc_stream_t *stream,       /* IN */
       memcpy(iov[i].iov_base,
              buffered->buffer.data + buffered->buffer.off,
              iov[i].iov_len);
-      buffered->buffer.off += iov[i].iov_len;
+      buffered->buffer.off += (off_t)iov[i].iov_len;
       buffered->buffer.len -= iov[i].iov_len;
    }
 
