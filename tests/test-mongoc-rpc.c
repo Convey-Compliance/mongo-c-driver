@@ -57,7 +57,7 @@ assert_rpc_equal (const char   *filename,
    uint8_t *data;
    mongoc_iovec_t *iov;
    size_t length;
-   off_t off = 0;
+   size_t off = 0;
    int r;
    int i;
 
