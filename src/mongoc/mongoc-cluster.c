@@ -1752,6 +1752,7 @@ _mongoc_cluster_auth_node_scram (mongoc_cluster_t      *cluster,
    _mongoc_scram_set_user (&scram, mongoc_uri_get_username (cluster->uri));
 
    for (;;) {
+      bson_subtype_t btype;
       if (!_mongoc_scram_step (&scram, buf, buflen, buf, sizeof buf, &buflen, error)) {
          goto failure;
       }
@@ -1803,7 +1804,6 @@ _mongoc_cluster_auth_node_scram (mongoc_cluster_t      *cluster,
          goto failure;
       }
 
-      bson_subtype_t btype;
       bson_iter_binary (&iter, &btype, &buflen, (const uint8_t**)&tmpstr);
 
       if (buflen > sizeof buf) {
