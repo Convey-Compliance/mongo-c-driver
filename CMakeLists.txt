@@ -13,9 +13,10 @@ set (SOURCE_DIR "${PROJECT_SOURCE_DIR}/")
 
 set (MONGOC_MAJOR_VERSION 1)
 set (MONGOC_MINOR_VERSION 1)
-set (MONGOC_MICRO_VERSION 0)
+set (MONGOC_MICRO_VERSION 5)
+set (MONGOC_PRERELEASE_VERSION dev)
 set (MONGOC_API_VERSION 1.0)
-set (MONGOC_VERSION 1.1.0-rc0)
+set (MONGOC_VERSION 1.1.5-dev)
 
 set (CPACK_RESOURCE_FILE_LICENSE "${SOURCE_DIR}/COPYING")
 set (CPACK_PACKAGE_VERSION_MAJOR ${MONGOC_MAJOR_VERSION})
@@ -51,6 +52,10 @@ if (UNIX AND NOT APPLE)
    set(LIBS ${LIBS} rt)
 endif()
 
+if (APPLE)
+   cmake_policy(SET CMP0042 OLD)
+endif()
+
 add_definitions(-D_GNU_SOURCE)
 add_definitions(-D_BSD_SOURCE)
 add_definitions("-DBINARY_DIR=\"${SOURCE_DIR}/tests/binary\"")
@@ -68,6 +73,7 @@ set (SOURCES
    ${SOURCE_DIR}/src/mongoc/mongoc-cursor.c
    ${SOURCE_DIR}/src/mongoc/mongoc-cursor-array.c
    ${SOURCE_DIR}/src/mongoc/mongoc-cursor-cursorid.c
+   ${SOURCE_DIR}/src/mongoc/mongoc-cursor-transform.c
    ${SOURCE_DIR}/src/mongoc/mongoc-database.c
    ${SOURCE_DIR}/src/mongoc/mongoc-init.c
    ${SOURCE_DIR}/src/mongoc/mongoc-gridfs.c
@@ -215,6 +221,7 @@ set(test-libmongoc-sources
    ${SOURCE_DIR}/tests/test-mongoc-queue.c
    ${SOURCE_DIR}/tests/test-mongoc-read-prefs.c
    ${SOURCE_DIR}/tests/test-mongoc-rpc.c
+   ${SOURCE_DIR}/tests/test-mongoc-socket.c
    ${SOURCE_DIR}/tests/test-mongoc-stream.c
    ${SOURCE_DIR}/tests/test-mongoc-uri.c
    ${SOURCE_DIR}/tests/test-mongoc-write-concern.c

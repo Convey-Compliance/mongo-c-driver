@@ -873,7 +873,7 @@ mongoc_collection_create_index (mongoc_collection_t      *collection,
       case MONGOC_INDEX_STORAGE_OPT_WIREDTIGER:
          wt_opt = (mongoc_index_opt_wt_t *)storage_opt;
          BSON_APPEND_DOCUMENT_BEGIN (&doc, "storageEngine", &storage_doc);
-         BSON_APPEND_DOCUMENT_BEGIN (&storage_doc, "wiredtiger", &wt_doc);
+         BSON_APPEND_DOCUMENT_BEGIN (&storage_doc, "wiredTiger", &wt_doc);
          BSON_APPEND_UTF8 (&wt_doc, "configString", wt_opt->config_str);
          bson_append_document_end (&storage_doc, &wt_doc);
          bson_append_document_end (&doc, &storage_doc);
@@ -1236,6 +1236,10 @@ mongoc_collection_update (mongoc_collection_t          *collection,
    bson_return_val_if_fail(update, false);
 
    bson_clear (&collection->gle);
+
+   if (!write_concern) {
+      write_concern = collection->write_concern;
+   }
 
    if (!((uint32_t)flags & MONGOC_UPDATE_NO_VALIDATE) &&
        bson_iter_init (&iter, update) &&
@@ -1798,6 +1802,10 @@ mongoc_collection_create_bulk_operation (
       const mongoc_write_concern_t *write_concern)
 {
    bson_return_val_if_fail (collection, NULL);
+
+   if (!write_concern) {
+      write_concern = collection->write_concern;
+   }
 
    /*
     * TODO: where should we discover if we can do new or old style bulk ops?

@@ -769,6 +769,15 @@ _mongoc_write_command_execute (mongoc_write_command_t       *command,       /* I
       write_concern = client->write_concern;
    }
 
+   if (!_mongoc_write_concern_is_valid(write_concern)) {
+      bson_set_error (&result->error,
+                      MONGOC_ERROR_COMMAND,
+                      MONGOC_ERROR_COMMAND_INVALID_ARG,
+                      "The write concern is invalid.");
+      result->failed = true;
+      EXIT;
+   }
+
    if (!hint) {
       hint = _mongoc_client_preselect (client, MONGOC_OPCODE_INSERT,
                                        write_concern, NULL, &result->error);
@@ -1123,7 +1132,7 @@ _mongoc_write_result_merge (mongoc_write_result_t  *result,  /* IN */
           * XXX: The following addition to nMatched needs some checking.
           *      I'm highly skeptical of it.
           */
-         result->nMatched += MAX (0, (affected - n_upserted));
+         result->nMatched += BSON_MAX (0, (affected - n_upserted));
       } else {
          result->nMatched += affected;
       }

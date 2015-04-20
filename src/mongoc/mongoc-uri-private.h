@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 MongoDB Inc.
+ * Copyright 2015 MongoDB, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,31 +14,26 @@
  * limitations under the License.
  */
 
-#ifndef MONGOC_B64_PRIVATE_H
-#define MONGOC_B64_PRIVATE_H
+#ifndef MONGOC_URI_PRIVATE_H
+#define MONGOC_URI_PRIVATE_H
 
 #if !defined (MONGOC_I_AM_A_DRIVER) && !defined (MONGOC_COMPILATION)
 #error "Only <mongoc.h> can be included directly."
 #endif
 
-#include <bson.h>
+#include "mongoc-uri.h"
 
-#include "mongoc-config.h"
 
-int
-mongoc_b64_ntop (uint8_t const *src,
-                 size_t         srclength,
-                 char          *target,
-                 size_t         targsize);
+BSON_BEGIN_DECLS
+
 
 void
-mongoc_b64_initialize_rmap (void);
+mongoc_uri_lowercase_hostname (const char *src,
+                               char       *buf /* OUT */,
+                               int         len);
 
-#ifdef MONGOC_ENABLE_SSL
-int
-mongoc_b64_pton (char const *src,
-                 uint8_t    *target,
-                 size_t      targsize);
-#endif
 
-#endif /* MONGOC_B64_PRIVATE_H */
+BSON_BEGIN_DECLS
+
+
+#endif /* MONGOC_URI_PRIVATE_H */
