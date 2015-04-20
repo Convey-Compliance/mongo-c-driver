@@ -89,7 +89,7 @@ _mongoc_n_return (mongoc_cursor_t * cursor)
       uint32_t remaining = cursor->limit - cursor->count;
 
       /* use min of batch or remaining */
-      r = MIN(r, (int32_t)remaining);
+      r = BSON_MIN(r, (int32_t)remaining);
    }
 
    return r;
@@ -541,10 +541,6 @@ _mongoc_cursor_query (mongoc_cursor_t *cursor)
    }
 
    if (_mongoc_cursor_unwrap_failure(cursor)) {
-      if ((cursor->error.domain == MONGOC_ERROR_QUERY) &&
-          (cursor->error.code == MONGOC_ERROR_QUERY_NOT_TAILABLE)) {
-         cursor->failed = true;
-      }
       GOTO (failure);
    }
 
@@ -977,6 +973,7 @@ _mongoc_cursor_clone (const mongoc_cursor_t *cursor)
    _clone->batch_size = cursor->batch_size;
    _clone->limit = cursor->limit;
    _clone->nslen = cursor->nslen;
+   _clone->has_fields = cursor->has_fields;
 
    if (cursor->read_prefs) {
       _clone->read_prefs = mongoc_read_prefs_copy (cursor->read_prefs);
