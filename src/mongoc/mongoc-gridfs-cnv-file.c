@@ -51,7 +51,7 @@ after_chunk_read (mongoc_gridfs_file_t *file, const uint8_t **data, uint32_t *le
    if (cnv_file->flags & MONGOC_CNV_UNCOMPRESS) {
       uint32_t uncompressed_len = file->chunk_size;
 
-      uncompress (cnv_file->buf_for_compress_encrypt, &uncompressed_len, *data, *len);
+      uncompress (cnv_file->buf_for_compress_encrypt, (uLongf*)&uncompressed_len, *data, *len);
 
       *data = cnv_file->buf_for_compress_encrypt;
       *len = uncompressed_len;
@@ -77,7 +77,7 @@ before_chunk_write (mongoc_gridfs_file_t *file, const uint8_t **data, uint32_t *
 
    if (cnv_file->flags & MONGOC_CNV_COMPRESS) {
       uint32_t compressed_len = compressBound (file->chunk_size);
-      compress2 (cnv_file->buf_for_compress_encrypt, &compressed_len, *data, *len, Z_BEST_SPEED);
+      compress2 (cnv_file->buf_for_compress_encrypt, (uLongf*)&compressed_len, *data, *len, Z_BEST_SPEED);
       cnv_file->compressed_length += compressed_len;
 
       *data = cnv_file->buf_for_compress_encrypt;
