@@ -421,7 +421,7 @@ mongoc_gridfs_cnv_file_set_aes_key_from_password (mongoc_gridfs_cnv_file_t *file
    uint8_t key[AUTOGEN_AES_KEY_SIZE];
    static const size_t SRCYPT_n_that_takes_avg_sec_to_generate_key = 4096;
 
-   if (file->flags & MONGOC_CNV_ENCRYPT)
+   if (!file->is_encrypted && file->flags & MONGOC_CNV_ENCRYPT)
       libscrypt_salt_gen (file->salt, sizeof file->salt);
    libscrypt_scrypt (password, password_size, file->salt, sizeof file->salt, 
                      SRCYPT_n_that_takes_avg_sec_to_generate_key, SCRYPT_r, SCRYPT_p,
