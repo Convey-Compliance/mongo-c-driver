@@ -359,7 +359,7 @@ test_encrypted_read_after_seek (void)
 
    /* check readed data after seek 
       seek should be based on decrypted data */
-   assert (r == 6);
+   assert (r == 5);
    assert (memcmp (hello_world + sizeof hello_world - r, iov.iov_base, r) == 0);
 
    mongoc_gridfs_cnv_file_destroy (file);
