@@ -44,8 +44,8 @@ BSON_BEGIN_DECLS
                                      const bson_t * bson);
 
 
-typedef struct _mongoc_gridfs_file_t                  mongoc_gridfs_file_t;
-typedef struct _mongoc_gridfs_file_opt_t              mongoc_gridfs_file_opt_t;
+typedef struct _mongoc_gridfs_file_t     mongoc_gridfs_file_t;
+typedef struct _mongoc_gridfs_file_opt_t mongoc_gridfs_file_opt_t;
 typedef struct _mongoc_gridfs_file_chunk_callbacks_t  mongoc_gridfs_file_chunk_callbacks_t;
 
 

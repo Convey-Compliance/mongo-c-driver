@@ -311,7 +311,7 @@ test_write (void)
    r = mongoc_gridfs_file_seek (file, 0, SEEK_SET);
    assert (!r);
 
-   r = (ssize_t)mongoc_gridfs_file_tell (file);
+   r = mongoc_gridfs_file_tell (file);
    assert (r == 0);
 
    r = mongoc_gridfs_file_readv (file, &riov, 1, len, 0);
@@ -359,7 +359,7 @@ test_stream (void)
 
    stream = mongoc_stream_gridfs_new (file);
 
-   r = mongoc_stream_readv (stream, &iov, 1, (size_t)file->length, 0);
+   r = mongoc_stream_readv (stream, &iov, 1, file->length, 0);
    assert (r == file->length);
 
    /* cleanup */

@@ -84,7 +84,7 @@ assert_rpc_equal (const char   *filename,
    mongoc_rpc_printf(rpc);
 #endif
 
-   for (i = 0; i < (int)ar.len; i++) {
+   for (i = 0; i < ar.len; i++) {
       iov = &_mongoc_array_index(&ar, mongoc_iovec_t, i);
       ASSERT(iov->iov_len <= (length - off));
       r = memcmp(&data[off], iov->iov_base, iov->iov_len);
