@@ -670,18 +670,9 @@ test_compressed_and_encrypted_write_read_10mb (void)
 }
 
 
-static void
-cleanup_globals (void)
-{
-   bson_free (gTestUri);
-}
-
-
 void
 test_gridfs_cnv_file_install (TestSuite *suite)
 {
-   gTestUri = bson_strdup_printf ("mongodb://%s/", MONGOC_TEST_HOST);
-
    TestSuite_Add (suite, "/Cnv_file/compressed/write", test_compressed_write);
    TestSuite_Add (suite, "/Cnv_file/compressed/read", test_compressed_read);
    TestSuite_Add (suite, "/Cnv_file/compressed/read_after_seek", test_compressed_read_after_seek);
@@ -699,6 +690,4 @@ test_gridfs_cnv_file_install (TestSuite *suite)
    TestSuite_Add (suite, "/Cnv_file/compressed_and_encrypted/write_read", test_compressed_and_encrypted_write_read);
    TestSuite_Add (suite, "/Cnv_file/compressed_and_encrypted/read_after_seek", test_compressed_and_encrypted_read_after_seek);
    TestSuite_Add (suite, "/Cnv_file/compressed_and_encrypted/write_read_10mb", test_compressed_and_encrypted_write_read_10mb);
-
-   atexit (cleanup_globals);
 }
