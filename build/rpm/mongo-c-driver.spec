@@ -1,10 +1,9 @@
 # norootforbuild
 
 %define DriverName    mongo-c-driver
-%define DriverVersion 1.1.5
+%define DriverVersion 1.2.0
 %define BsonName      libbson
-%define BsonVersion   1.1.5
-
+%define BsonVersion   1.2.0
 Name:           %{DriverName}
 Version:        %{DriverVersion}
 Release:        1%{?dist}
@@ -24,9 +23,7 @@ BuildRequires:  pkgconfig
 %description
 mongo-c-driver is a library for building high-performance
 applications that communicate with the MongoDB NoSQL
-database in the C language. It can also be used to write
-fast client implementations in languages such as Python,
-Ruby, or Perl.
+database in the C language.
 
 
 %package devel
@@ -117,8 +114,29 @@ find $RPM_BUILD_ROOT -name '*.la' -exec rm -f {} ';'
 
 
 %changelog -n %{DriverName}
-* Wed Apr 1 2015 Jason Carey <jason.carey@mongodb.com> - 1.1.5-1
-- Post-release bump for 1.1.4
+* Tue October 13 2015 A. Jesse Jiryu Davis <jesse@mongodb.com> - 1.2.0-1
+- Release 1.2.0
+
+* Wed September 23 2015 A. Jesse Jiryu Davis <jesse@mongodb.com> - 1.1.11-1
+- Release 1.1.11
+
+* Tue July 21 2015 A. Jesse Jiryu Davis <jesse@mongodb.com> - 1.1.10-1
+- Release 1.1.10
+
+* Sun June 28 2015 A. Jesse Jiryu Davis <jesse@mongodb.com> - 1.1.9-1
+- Release 1.1.9
+
+* Sun June 21 2015 A. Jesse Jiryu Davis <jesse@mongodb.com> - 1.1.8-1
+- Release 1.1.8
+
+* Tue June 9 2015 A. Jesse Jiryu Davis <jesse@mongodb.com> - 1.1.7-1
+- Release 1.1.7
+
+* Tue May 18 2015 A. Jesse Jiryu Davis <jesse@mongodb.com> - 1.1.6-1
+- Release 1.1.6
+
+* Tue May 12 2015 A. Jesse Jiryu Davis <jesse@mongodb.com> - 1.1.5-1
+- Release 1.1.5
 
 * Wed Apr 1 2015 Jason Carey <jason.carey@mongodb.com> - 1.1.4-1
 - Release 1.1.4.
@@ -179,8 +197,29 @@ find $RPM_BUILD_ROOT -name '*.la' -exec rm -f {} ';'
 
 
 %changelog -n %{BsonName}
-* Wed Apr 1 2015 Jason Carey <jason.carey@mongodb.com> - 1.1.5-1
-- Post-release bump for 1.1.4
+* Tue October 13 2015 A. Jesse Jiryu Davis <jesse@mongodb.com> - 1.2.0-1
+- Release 1.2.0
+
+* Wed September 23 2015 A. Jesse Jiryu Davis <jesse@mongodb.com> - 1.1.11-1
+- Release 1.1.11
+
+* Tue July 21 2015 A. Jesse Jiryu Davis <jesse@mongodb.com> - 1.1.10-1
+- Release 1.1.10
+
+* Sun June 28 2015 A. Jesse Jiryu Davis <jesse@mongodb.com> - 1.1.9-1
+- Release 1.1.9
+
+* Sun June 21 2015 A. Jesse Jiryu Davis <jesse@mongodb.com> - 1.1.8-1
+- Release 1.1.8
+
+* Tue June 9 2015 A. Jesse Jiryu Davis <jesse@mongodb.com> - 1.1.7-1
+- Release 1.1.7
+
+* Tue May 18 2015 A. Jesse Jiryu Davis <jesse@mongodb.com> - 1.1.6-1
+- Release 1.1.6
+
+* Tue May 12 2015 A. Jesse Jiryu Davis <jesse@mongodb.com> - 1.1.5-1
+- Release 1.1.5
 
 * Wed Apr 1 2015 Jason Carey <jason.carey@mongodb.com> - 1.1.4-1
 - Release 1.1.4.

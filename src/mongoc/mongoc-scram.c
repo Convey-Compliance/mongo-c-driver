@@ -26,6 +26,8 @@
 
 #include "mongoc-b64-private.h"
 
+#include "mongoc-memcmp-private.h"
+
 #include <openssl/sha.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -140,7 +142,7 @@ _mongoc_scram_start (mongoc_scram_t *scram,
    BSON_ASSERT (outbuflen);
 
    /* auth message is as big as the outbuf just because */
-   scram->auth_message = bson_malloc (outbufmax);
+   scram->auth_message = (uint8_t *)bson_malloc (outbufmax);
    scram->auth_messagemax = outbufmax;
 
    /* the server uses a 24 byte random nonce.  so we do as well */
@@ -304,6 +306,33 @@ _mongoc_scram_salt_password (mongoc_scram_t *scram,
 
 
 static bool
+_mongoc_scram_sha1 (const unsigned char *input,
+                    const size_t         input_len,
+                    unsigned char       *output)
+{
+   EVP_MD_CTX digest_ctx;
+   bool rval = false;
+
+   EVP_MD_CTX_init (&digest_ctx);
+
+   if (1 != EVP_DigestInit_ex (&digest_ctx, EVP_sha1 (), NULL)) {
+      goto cleanup;
+   }
+
+   if (1 != EVP_DigestUpdate (&digest_ctx, input, input_len)) {
+      goto cleanup;
+   }
+
+   rval = (1 == EVP_DigestFinal_ex (&digest_ctx, output, NULL));
+
+cleanup:
+   EVP_MD_CTX_cleanup (&digest_ctx);
+
+   return rval;
+}
+
+
+static bool
 _mongoc_scram_generate_client_proof (mongoc_scram_t *scram,
                                      uint8_t        *outbuf,
                                      uint32_t        outbufmax,
@@ -327,7 +356,7 @@ _mongoc_scram_generate_client_proof (mongoc_scram_t *scram,
          &hash_len);
 
    /* StoredKey := H(client_key) */
-   SHA1 (client_key, MONGOC_SCRAM_HASH_SIZE, stored_key);
+   _mongoc_scram_sha1 (client_key, MONGOC_SCRAM_HASH_SIZE, stored_key);
 
    /* ClientSignature := HMAC(StoredKey, AuthMessage) */
    HMAC (EVP_sha1 (),
@@ -455,7 +484,7 @@ _mongoc_scram_step2 (mongoc_scram_t *scram,
 
       ptr++;
 
-      next_comma = memchr (ptr, ',', (inbuf + inbuflen) - ptr);
+      next_comma = (const uint8_t*)memchr (ptr, ',', (inbuf + inbuflen) - ptr);
 
       if (next_comma) {
          *current_val_len = (uint32_t) (next_comma - ptr);
@@ -463,7 +492,7 @@ _mongoc_scram_step2 (mongoc_scram_t *scram,
          *current_val_len = (uint32_t) ((inbuf + inbuflen) - ptr);
       }
 
-      *current_val = bson_malloc (*current_val_len + 1);
+      *current_val = (uint8_t *)bson_malloc (*current_val_len + 1);
       memcpy (*current_val, ptr, *current_val_len);
       (*current_val)[*current_val_len] = '\0';
 
@@ -503,7 +532,7 @@ _mongoc_scram_step2 (mongoc_scram_t *scram,
 
    /* verify our nonce */
    if (val_r_len < scram->encoded_nonce_len ||
-       memcmp (val_r, scram->encoded_nonce, scram->encoded_nonce_len)) {
+       mongoc_memcmp (val_r, scram->encoded_nonce, scram->encoded_nonce_len)) {
       bson_set_error (error,
                       MONGOC_ERROR_SCRAM,
                       MONGOC_ERROR_SCRAM_PROTOCOL_ERROR,
@@ -638,9 +667,12 @@ _mongoc_scram_verify_server_signature (mongoc_scram_t *scram,
       mongoc_b64_ntop (server_signature, sizeof (server_signature),
                        encoded_server_signature,
                        sizeof (encoded_server_signature));
+   if (encoded_server_signature_len == -1) {
+      return false;
+   }
 
    return (len == encoded_server_signature_len) &&
-          (memcmp (verification, encoded_server_signature, len) == 0);
+          (mongoc_memcmp (verification, encoded_server_signature, len) == 0);
 }
 
 
@@ -703,7 +735,7 @@ _mongoc_scram_step3 (mongoc_scram_t *scram,
 
       ptr++;
 
-      next_comma = memchr (ptr, ',', (inbuf + inbuflen) - ptr);
+      next_comma = (const uint8_t*)memchr (ptr, ',', (inbuf + inbuflen) - ptr);
 
       if (next_comma) {
          *current_val_len = (uint32_t) (next_comma - ptr);
@@ -711,7 +743,7 @@ _mongoc_scram_step3 (mongoc_scram_t *scram,
          *current_val_len = (uint32_t) ((inbuf + inbuflen) - ptr);
       }
 
-      *current_val = bson_malloc (*current_val_len + 1);
+      *current_val = (uint8_t *)bson_malloc (*current_val_len + 1);
       memcpy (*current_val, ptr, *current_val_len);
       (*current_val)[*current_val_len] = '\0';
 

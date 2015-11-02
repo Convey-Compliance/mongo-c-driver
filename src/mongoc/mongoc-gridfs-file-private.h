@@ -38,6 +38,7 @@ struct _mongoc_gridfs_file_t
    bson_t                     bson;
    mongoc_gridfs_file_page_t *page;
    uint64_t                   pos;
+   int32_t                    n;
    bson_error_t               error;
    bool                       failed;
    mongoc_cursor_t           *cursor;
@@ -59,7 +60,6 @@ struct _mongoc_gridfs_file_t
    const char                *bson_content_type;
    bson_t                     bson_aliases;
    bson_t                     bson_metadata;
-   bool                                        pos_after_read_write;
    const mongoc_gridfs_file_chunk_callbacks_t *chunk_callbacks;
    void                                       *chunk_callbacks_custom_data;
 };

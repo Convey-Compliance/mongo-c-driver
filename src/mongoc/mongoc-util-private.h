@@ -23,11 +23,26 @@
 
 #include <bson.h>
 
+/* string comparison functions for Windows */
+#ifdef _WIN32
+# define strcasecmp  _stricmp
+# define strncasecmp _strnicmp
+#endif
+
+/* Suppress CWE-252 ("Unchecked return value") warnings for things we can't deal with */
+#if defined(__GNUC__) && __GNUC__ >= 4
+# define _ignore_value(x) (({ __typeof__ (x) __x = (x); (void) __x; }))
+#else
+# define _ignore_value(x) ((void) (x))
+#endif
+
 
 BSON_BEGIN_DECLS
 
 
 char *_mongoc_hex_md5 (const char *input);
+
+void _mongoc_usleep (int64_t usec);
 
 
 BSON_END_DECLS
