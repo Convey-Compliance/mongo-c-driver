@@ -371,7 +371,7 @@ static void
 test_encrypted_write_read_10mb (void)
 {
    SETUP_DECLARATIONS ("test_encrypted_write_read_10mb")
-   const u_long DATA_LEN = 10 * 1024 * 1024;
+   const size_t DATA_LEN = 10 * 1024 * 1024;
    size_t i;
    char *data_buf = bson_malloc0 (DATA_LEN), 
         *encrypted_buf = bson_malloc0 (DATA_LEN);
