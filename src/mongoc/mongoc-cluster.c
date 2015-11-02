@@ -110,7 +110,7 @@ _mongoc_cluster_update_state (mongoc_cluster_t *cluster)
    mongoc_cluster_node_t *node;
    int up_nodes = 0;
    int down_nodes = 0;
-   uint32_t i;
+   int i;
 
    ENTRY;
 
@@ -2040,8 +2040,8 @@ _mongoc_cluster_reconnect_replica_set (mongoc_cluster_t *cluster,
    mongoc_list_t *liter;
    int32_t ping;
    const char *replSet;
-   uint32_t i;
-   uint32_t j;
+   int i;
+   int j;
    bool rval = false;
 
    ENTRY;
@@ -2396,7 +2396,7 @@ _mongoc_cluster_reconnect (mongoc_cluster_t *cluster,
                            bson_error_t     *error)
 {
    bool ret;
-   uint32_t i;
+   int i;
 
    ENTRY;
 
@@ -2449,7 +2449,7 @@ _mongoc_cluster_command_early (mongoc_cluster_t *cluster,
                                bson_error_t     *error)
 {
    mongoc_cluster_node_t *node;
-   uint32_t i;
+   int i;
 
    BSON_ASSERT (cluster);
    BSON_ASSERT (cluster->state == MONGOC_CLUSTER_STATE_BORN);

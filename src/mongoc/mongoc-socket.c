@@ -824,7 +824,7 @@ _mongoc_socket_try_sendv_slow (mongoc_socket_t *sock,   /* IN */
    BSON_ASSERT (iovcnt);
 
    for (i = 0; i < iovcnt; i++) {
-      wrote = send (sock->sd, iov [i].iov_base, (int)iov [i].iov_len, 0);
+      wrote = send (sock->sd, iov [i].iov_base, iov [i].iov_len, 0);
       _mongoc_socket_capture_errno (sock);
 #ifdef _WIN32
       if (wrote == SOCKET_ERROR) {
