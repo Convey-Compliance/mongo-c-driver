@@ -264,7 +264,7 @@ _mongoc_scram_salt_password (mongoc_scram_t *scram,
 
    /* Placeholder for HMAC return size, will always be scram::hashSize for HMAC SHA-1 */
    uint32_t hash_len = 0;
-   uint32_t i;
+   int i;
    int k;
    uint8_t *output = scram->salted_password;
 
@@ -374,7 +374,7 @@ _mongoc_scram_step2 (mongoc_scram_t *scram,
                      bson_error_t   *error)
 {
    uint8_t *val_r = NULL;
-   int32_t val_r_len;
+   uint32_t val_r_len;
    uint8_t *val_s = NULL;
    uint32_t val_s_len;
    uint8_t *val_i = NULL;
