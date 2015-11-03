@@ -22,11 +22,18 @@
 #include "mongoc-cluster-private.h"
 #include "mongoc-client-private.h"
 #include "mongoc-trace.h"
+#include "bson-atomic.h"
+
+typedef struct _pooled_mongoc_client_t 
+{
+  struct _mongoc_client_t *client;
+  int64_t insertionTime;
+} _pooled_mongoc_client_t;
 
 #ifdef MONGOC_ENABLE_SSL
 void
 cnv_mongoc_client_pool_set_ssl_opts (cnv_mongoc_client_pool_t   *pool,
-                                 const mongoc_ssl_opt_t *opts)
+                                     const mongoc_ssl_opt_t *opts)
 {
    bson_return_if_fail (pool);
 
@@ -45,75 +52,111 @@ cnv_mongoc_client_pool_set_ssl_opts (cnv_mongoc_client_pool_t   *pool,
 }
 #endif
 
+#define CLEANUP_POOL_MIN_THREADS 1
+#define CLEANUP_POOL_MAX_THREADS 2
+#define DEFAULT_CLEANUP_TIMER_INTERVAL 60000
+#define DEFAULT_MAX_ALLOWED_IDLE_TIME (60000 * 5)
+
+static SvcBusThreadPool cleanupPool;
+static volatile long cleanupPoolInitCount = 0;
+
+static void cleanupIdleConnections(void* context) 
+{
+  cnv_mongoc_client_pool_t * pool = (cnv_mongoc_client_pool_t *) context;
+  mongoc_queue_t clientsToDispose;
+  mongoc_client_t* client;
+  _pooled_mongoc_client_t *pooledClient;
+  uint32_t pooledElementsCount;
+
+  ENTRY;
+
+  _mongoc_queue_init(&clientsToDispose);
+
+  mongoc_mutex_lock(&pool->mutex);
+  pooledElementsCount = _mongoc_queue_get_length(&pool->queue);
+
+  while (pooledElementsCount-- > 0) {
+    pooledClient = (_pooled_mongoc_client_t*)_mongoc_queue_pop_head(&pool->queue);
+    if(bson_get_monotonic_time() - pooledClient->insertionTime > pool->maxIdleMillis * 1000L) {
+      _mongoc_queue_push_head(&clientsToDispose, pooledClient->client);
+      bson_free(pooledClient);
+    } else {
+      _mongoc_queue_push_tail(&pool->queue, pooledClient);
+    }
+  }
+  mongoc_mutex_unlock(&pool->mutex);
+
+  while((client = (mongoc_client_t*) _mongoc_queue_pop_head(&clientsToDispose))) {
+    mongoc_client_destroy(client);
+  }
+
+  EXIT;
+}
 
 cnv_mongoc_client_pool_t *
 cnv_mongoc_client_pool_new (const mongoc_uri_t *uri)
 {
    cnv_mongoc_client_pool_t *pool;
-   const bson_t *b;
-   bson_iter_t iter;
 
    ENTRY;
 
+   if(bson_atomic_int_add(&cleanupPoolInitCount, 1) == 1) {
+     SvcBusThreadPool_init(&cleanupPool, CLEANUP_POOL_MIN_THREADS, CLEANUP_POOL_MAX_THREADS);
+   }
+
    bson_return_val_if_fail(uri, NULL);
 
-   pool = bson_malloc0(sizeof *pool);
+   pool = (cnv_mongoc_client_pool_t*) bson_malloc0(sizeof *pool);
    mongoc_mutex_init(&pool->mutex);
    _mongoc_queue_init(&pool->queue);
    pool->uri = mongoc_uri_copy(uri);
-   pool->min_pool_size = 0;
-   pool->max_pool_size = 100;
-   pool->size = 0;
 
-   b = mongoc_uri_get_options(pool->uri);
-
-   if (bson_iter_init_find_case(&iter, b, "minpoolsize")) {
-      if (BSON_ITER_HOLDS_INT32(&iter)) {
-         pool->min_pool_size = BSON_MAX(0, bson_iter_int32(&iter));
-      }
-   }
-
-   if (bson_iter_init_find_case(&iter, b, "maxpoolsize")) {
-      if (BSON_ITER_HOLDS_INT32(&iter)) {
-         pool->max_pool_size = BSON_MAX(1, bson_iter_int32(&iter));
-      }
-   }
+   SvcBusThreadPoolTimer_init(&pool->cleanupTimer);
+   cnv_mongoc_client_pool_configure_cleanup_timer(pool, DEFAULT_CLEANUP_TIMER_INTERVAL, DEFAULT_MAX_ALLOWED_IDLE_TIME);
 
    mongoc_counter_client_pools_active_inc();
 
    RETURN(pool);
 }
 
-
 void
 cnv_mongoc_client_pool_destroy (cnv_mongoc_client_pool_t *pool)
 {
    mongoc_client_t *client;
+   _pooled_mongoc_client_t *pooledClient;
 
    ENTRY;
 
    bson_return_if_fail(pool);
 
-   while ((client = _mongoc_queue_pop_head(&pool->queue))) {
-      mongoc_client_destroy(client);
+   SvcBusThreadPoolTimer_stop(&pool->cleanupTimer);
+   SvcBusThreadPoolTimer_destroy(&pool->cleanupTimer);
+
+   while ((pooledClient = (_pooled_mongoc_client_t*)_mongoc_queue_pop_head(&pool->queue))) {
+     client = pooledClient->client;
+     bson_free(pooledClient);
+     mongoc_client_destroy(client);
    }
 
    mongoc_uri_destroy(pool->uri);
    mongoc_mutex_destroy(&pool->mutex);
-   mongoc_cond_destroy(&pool->cond);
    bson_free(pool);
 
    mongoc_counter_client_pools_active_dec();
    mongoc_counter_client_pools_disposed_inc();
 
+   if(bson_atomic_int_add(&cleanupPoolInitCount, -1) == 0) {
+     SvcBusThreadPool_destroy(&cleanupPool);
+   }
+
    EXIT;
 }
-
 
 mongoc_client_t *
 cnv_mongoc_client_pool_pop (cnv_mongoc_client_pool_t *pool)
 {
    mongoc_client_t *client;
+   _pooled_mongoc_client_t* pooledClient;
 
    ENTRY;
 
@@ -121,106 +164,68 @@ cnv_mongoc_client_pool_pop (cnv_mongoc_client_pool_t *pool)
 
    mongoc_mutex_lock(&pool->mutex);
 
-again:
-   if (!(client = _mongoc_queue_pop_head(&pool->queue))) {
-      if (pool->size < pool->max_pool_size) {
-         client = mongoc_client_new_from_uri(pool->uri);
-#ifdef MONGOC_ENABLE_SSL
-         if (pool->ssl_opts_set) {
-            mongoc_client_set_ssl_opts (client, &pool->ssl_opts);
-         }
-#endif
-         pool->size++;
-      } else {
-         mongoc_cond_wait(&pool->cond, &pool->mutex);
-         GOTO(again);
-      }
-   }
+   if (!((pooledClient = (_pooled_mongoc_client_t *) _mongoc_queue_pop_head(&pool->queue)))) {
+     // We don't want to create new client inside lock, too much contention unnecessarily
+     mongoc_mutex_unlock(&pool->mutex);
 
-   mongoc_mutex_unlock(&pool->mutex);
+     client = mongoc_client_new_from_uri(pool->uri);
+#ifdef MONGOC_ENABLE_SSL
+     if (pool->ssl_opts_set) {
+       mongoc_client_set_ssl_opts (client, &pool->ssl_opts);
+     }
+#endif
+   } else {     
+     mongoc_mutex_unlock(&pool->mutex);
+     client = pooledClient->client;
+     bson_free(pooledClient);
+   }
 
    RETURN(client);
 }
 
-
-mongoc_client_t *
-cnv_mongoc_client_pool_try_pop (cnv_mongoc_client_pool_t *pool)
+static
+void
+cnv_mongoc_client_pool_push_tail(cnv_mongoc_client_pool_t *pool,
+                                 mongoc_client_t          *client)
 {
-   mongoc_client_t *client;
+  _pooled_mongoc_client_t* pooledClient;
 
-   ENTRY;
+  pooledClient = (_pooled_mongoc_client_t*) bson_malloc(sizeof *pooledClient);
+  pooledClient->client = client;
+  pooledClient->insertionTime = bson_get_monotonic_time();
 
-   bson_return_val_if_fail(pool, NULL);
-
-   mongoc_mutex_lock(&pool->mutex);
-
-   if (!(client = _mongoc_queue_pop_head(&pool->queue))) {
-      if (pool->size < pool->max_pool_size) {
-         client = mongoc_client_new_from_uri(pool->uri);
-#ifdef MONGOC_ENABLE_SSL
-         if (pool->ssl_opts_set) {
-            mongoc_client_set_ssl_opts (client, &pool->ssl_opts);
-         }
-#endif
-         pool->size++;
-      }
-   }
-
-   mongoc_mutex_unlock(&pool->mutex);
-
-   RETURN(client);
+  mongoc_mutex_lock (&pool->mutex);
+  _mongoc_queue_push_tail (&pool->queue, pooledClient);
+  mongoc_mutex_unlock(&pool->mutex);
 }
-
 
 void
 cnv_mongoc_client_pool_push (cnv_mongoc_client_pool_t *pool,
-                         mongoc_client_t      *client)
+                             mongoc_client_t          *client)
 {
    ENTRY;
 
    bson_return_if_fail(pool);
    bson_return_if_fail(client);
 
-   mongoc_mutex_lock(&pool->mutex);
-   if (pool->size > pool->min_pool_size) {
-      mongoc_client_t *old_client;
-      old_client = _mongoc_queue_pop_head (&pool->queue);
-      if (old_client) {
-          mongoc_client_destroy (old_client);
-          pool->size--;
-      }
-   }
-   mongoc_mutex_unlock(&pool->mutex);
-
    if ((client->cluster.state == MONGOC_CLUSTER_STATE_HEALTHY) ||
        (client->cluster.state == MONGOC_CLUSTER_STATE_BORN)) {
-      mongoc_mutex_lock (&pool->mutex);
-      _mongoc_queue_push_tail (&pool->queue, client);
+     cnv_mongoc_client_pool_push_tail(pool, client);
    } else if (_mongoc_cluster_reconnect (&client->cluster, NULL)) {
-      mongoc_mutex_lock (&pool->mutex);
-      _mongoc_queue_push_tail (&pool->queue, client);
+     cnv_mongoc_client_pool_push_tail(pool, client);
    } else {
-      mongoc_client_destroy (client);
-      mongoc_mutex_lock (&pool->mutex);
-      pool->size--;
+     mongoc_client_destroy (client);
    }
-
-   mongoc_cond_signal(&pool->cond);
-   mongoc_mutex_unlock(&pool->mutex);
 
    EXIT;
 }
 
-size_t
-cnv_mongoc_client_pool_get_size (cnv_mongoc_client_pool_t *pool)
+void
+cnv_mongoc_client_pool_configure_cleanup_timer (cnv_mongoc_client_pool_t *pool,
+                                                unsigned int             timerIntervalMillis,
+                                                unsigned int             maxIdleMillis)
 {
-   size_t size = 0;
-
-   ENTRY;
-
-   mongoc_mutex_lock (&pool->mutex);
-   size = pool->size;
-   mongoc_mutex_unlock (&pool->mutex);
-
-   RETURN (size);
+  SvcBusThreadPoolTimer_stop(&pool->cleanupTimer);
+  pool->maxIdleMillis = maxIdleMillis;
+  SvcBusThreadPoolTimer_start(&pool->cleanupTimer, &cleanupPool, &cleanupIdleConnections, pool, timerIntervalMillis);
 }

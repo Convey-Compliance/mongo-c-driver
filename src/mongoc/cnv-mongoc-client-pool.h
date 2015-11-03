@@ -36,11 +36,13 @@ void                  cnv_mongoc_client_pool_destroy (cnv_mongoc_client_pool_t *
 mongoc_client_t      *cnv_mongoc_client_pool_pop     (cnv_mongoc_client_pool_t *pool);
 void                  cnv_mongoc_client_pool_push    (cnv_mongoc_client_pool_t *pool,
                                                   mongoc_client_t      *client);
-mongoc_client_t      *cnv_mongoc_client_pool_try_pop (cnv_mongoc_client_pool_t *pool);
 #ifdef MONGOC_ENABLE_SSL
 void                  cnv_mongoc_client_pool_set_ssl_opts (cnv_mongoc_client_pool_t   *pool,
                                                            const mongoc_ssl_opt_t *opts);
 #endif
+void                  cnv_mongoc_client_pool_configure_cleanup_timer (cnv_mongoc_client_pool_t *pool,
+                                                                      unsigned int timerIntervalMillis,
+                                                                      unsigned int maxIdleMillis);
 
 
 BSON_END_DECLS
