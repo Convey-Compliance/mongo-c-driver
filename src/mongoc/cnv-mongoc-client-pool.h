@@ -17,12 +17,6 @@
 #ifndef CNV_MONGOC_CLIENT_POOL_H
 #define CNV_MONGOC_CLIENT_POOL_H
 
-#if !defined (MONGOC_INSIDE) && !defined (MONGOC_COMPILATION)
-# error "Only <mongoc.h> can be included directly."
-#endif
-
-#include <bson.h>
-
 #include "mongoc-client.h"
 #include "mongoc-config.h"
 #ifdef MONGOC_ENABLE_SSL
