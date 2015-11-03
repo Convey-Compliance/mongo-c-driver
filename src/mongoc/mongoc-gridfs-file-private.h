@@ -34,32 +34,32 @@ BSON_BEGIN_DECLS
 
 struct _mongoc_gridfs_file_t
 {
-   mongoc_gridfs_t                            *gridfs;
-   bson_t                                      bson;
-   mongoc_gridfs_file_page_t                  *page;
-   uint64_t                                    pos;
-   bson_error_t                                error;
-   bool                                        failed;
-   mongoc_cursor_t                            *cursor;
-   uint32_t                                    cursor_range[2];
-   bool                                        is_dirty;
+   mongoc_gridfs_t           *gridfs;
+   bson_t                     bson;
+   mongoc_gridfs_file_page_t *page;
+   uint64_t                   pos;
+   int32_t                    n;
+   bson_error_t               error;
+   bool                       failed;
+   mongoc_cursor_t           *cursor;
+   uint32_t                   cursor_range[2];
+   bool                       is_dirty;
 
-   bson_value_t                                files_id;
-   int64_t                                     length;
-   int32_t                                     chunk_size;
-   int64_t                                     upload_date;
+   bson_value_t               files_id;
+   int64_t                    length;
+   int32_t                    chunk_size;
+   int64_t                    upload_date;
 
-   char                                       *md5;
-   char                                       *filename;
-   char                                       *content_type;
-   bson_t                                      aliases;
-   bson_t                                      metadata;
-   const char                                 *bson_md5;
-   const char                                 *bson_filename;
-   const char                                 *bson_content_type;
-   bson_t                                      bson_aliases;
-   bson_t                                      bson_metadata;
-   bool                                        pos_after_read_write;
+   char                      *md5;
+   char                      *filename;
+   char                      *content_type;
+   bson_t                     aliases;
+   bson_t                     metadata;
+   const char                *bson_md5;
+   const char                *bson_filename;
+   const char                *bson_content_type;
+   bson_t                     bson_aliases;
+   bson_t                     bson_metadata;
    const mongoc_gridfs_file_chunk_callbacks_t *chunk_callbacks;
    void                                       *chunk_callbacks_custom_data;
 };
