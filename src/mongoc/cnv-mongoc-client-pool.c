@@ -139,15 +139,15 @@ cnv_mongoc_client_pool_destroy (cnv_mongoc_client_pool_t *pool)
    }
 
    mongoc_uri_destroy(pool->uri);
+
+   if(bson_atomic_int_add(&cleanupPoolInitCount, -1) == 0) {
+     SvcBusThreadPool_destroy(&cleanupPool);
+   }
    mongoc_mutex_destroy(&pool->mutex);
    bson_free(pool);
 
    mongoc_counter_client_pools_active_dec();
    mongoc_counter_client_pools_disposed_inc();
-
-   if(bson_atomic_int_add(&cleanupPoolInitCount, -1) == 0) {
-     SvcBusThreadPool_destroy(&cleanupPool);
-   }
 
    EXIT;
 }
