@@ -25,6 +25,7 @@
 
 #include "cnv-mongoc-client-pool.h"
 #include "mongoc-queue-private.h"
+#include "mongoc-read-prefs-private.h"
 #include "svcbus_thread_pool.h"
 
 BSON_BEGIN_DECLS
@@ -40,15 +41,16 @@ BSON_BEGIN_DECLS
 
 struct _cnv_mongoc_client_pool_t
 {
-  mongoc_mutex_t    mutex;
-  mongoc_queue_t    queue;
-  mongoc_uri_t     *uri;
+   mongoc_mutex_t     mutex;
+   mongoc_queue_t     queue;
+   mongoc_topology_t *topology;
+   mongoc_uri_t      *uri;
 #ifdef MONGOC_ENABLE_SSL
-  bool              ssl_opts_set;
-  mongoc_ssl_opt_t  ssl_opts;
+   bool               ssl_opts_set;
+   mongoc_ssl_opt_t   ssl_opts;
 #endif
-  SvcBusThreadPoolTimer cleanupTimer;
-  unsigned int maxIdleMillis;
+   SvcBusThreadPoolTimer cleanupTimer;
+   unsigned int maxIdleMillis;
 };
 
 BSON_END_DECLS
