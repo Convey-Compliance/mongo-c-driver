@@ -35,7 +35,7 @@ void
 cnv_mongoc_client_pool_set_ssl_opts (cnv_mongoc_client_pool_t   *pool,
                                      const mongoc_ssl_opt_t *opts)
 {
-   bson_return_if_fail (pool);
+   BSON_ASSERT (pool);
 
    mongoc_mutex_lock (&pool->mutex);
 
@@ -48,6 +48,8 @@ cnv_mongoc_client_pool_set_ssl_opts (cnv_mongoc_client_pool_t   *pool,
 
    }
 
+   mongoc_topology_scanner_set_ssl_opts (pool->topology->scanner, &pool->ssl_opts);
+
    mongoc_mutex_unlock (&pool->mutex);
 }
 #endif
@@ -59,6 +61,122 @@ cnv_mongoc_client_pool_set_ssl_opts (cnv_mongoc_client_pool_t   *pool,
 
 static SvcBusThreadPool cleanupPool;
 static volatile long cleanupPoolInitCount = 0;
+
+cnv_mongoc_client_pool_t *
+cnv_mongoc_client_pool_new (const mongoc_uri_t *uri)
+{
+   mongoc_topology_t *topology;
+   cnv_mongoc_client_pool_t *pool;
+
+   ENTRY;
+
+   BSON_ASSERT (uri);
+
+   if(bson_atomic_int_add(&cleanupPoolInitCount, 1) == 1) {
+     SvcBusThreadPool_init(&cleanupPool, CLEANUP_POOL_MIN_THREADS, CLEANUP_POOL_MAX_THREADS);
+   }
+
+   pool = (cnv_mongoc_client_pool_t*) bson_malloc0(sizeof *pool);
+   mongoc_mutex_init(&pool->mutex);
+   _mongoc_queue_init(&pool->queue);
+   pool->uri = mongoc_uri_copy(uri);
+
+   topology = mongoc_topology_new(uri, false);
+   pool->topology = topology;
+
+   SvcBusThreadPoolTimer_init(&pool->cleanupTimer);
+   cnv_mongoc_client_pool_configure_cleanup_timer(pool, DEFAULT_CLEANUP_TIMER_INTERVAL, DEFAULT_MAX_ALLOWED_IDLE_TIME);
+
+   mongoc_counter_client_pools_active_inc();
+
+   RETURN(pool);
+}
+
+void
+cnv_mongoc_client_pool_destroy (cnv_mongoc_client_pool_t *pool)
+{
+   mongoc_client_t *client;
+   _pooled_mongoc_client_t *pooledClient;
+
+   ENTRY;
+
+   BSON_ASSERT(pool);
+
+   SvcBusThreadPoolTimer_stop(&pool->cleanupTimer);
+   SvcBusThreadPoolTimer_destroy(&pool->cleanupTimer);
+
+   while ((pooledClient = (_pooled_mongoc_client_t*)_mongoc_queue_pop_head(&pool->queue))) {
+     client = pooledClient->client;
+     bson_free(pooledClient);
+     mongoc_client_destroy(client);
+   }
+
+   mongoc_topology_destroy (pool->topology);
+
+   mongoc_uri_destroy(pool->uri);
+
+   if(bson_atomic_int_add(&cleanupPoolInitCount, -1) == 0) {
+     SvcBusThreadPool_destroy(&cleanupPool);
+   }
+   mongoc_mutex_destroy(&pool->mutex);
+   bson_free(pool);
+
+   mongoc_counter_client_pools_active_dec();
+   mongoc_counter_client_pools_disposed_inc();
+
+   EXIT;
+}
+
+mongoc_client_t *
+cnv_mongoc_client_pool_pop (cnv_mongoc_client_pool_t *pool)
+{
+   mongoc_client_t *client;
+   _pooled_mongoc_client_t* pooledClient;
+
+   ENTRY;
+
+   BSON_ASSERT(pool);
+
+   mongoc_mutex_lock(&pool->mutex);
+
+   if (!(pooledClient = (_pooled_mongoc_client_t *) _mongoc_queue_pop_head(&pool->queue))) {
+     client = mongoc_client_new_from_uri(pool->uri, pool->topology);
+#ifdef MONGOC_ENABLE_SSL
+     if (pool->ssl_opts_set) {
+       mongoc_client_set_ssl_opts (client, &pool->ssl_opts);
+     }
+#endif
+   } else {
+     client = pooledClient->client;
+     bson_free(pooledClient);
+   }
+
+   mongoc_mutex_unlock(&pool->mutex);
+
+   RETURN(client);
+}
+
+void
+cnv_mongoc_client_pool_push (cnv_mongoc_client_pool_t *pool,
+                             mongoc_client_t          *client)
+{
+   _pooled_mongoc_client_t* pooledClient;
+
+   ENTRY;
+
+   BSON_ASSERT(pool);
+   BSON_ASSERT(client);
+
+   pooledClient = (_pooled_mongoc_client_t*) bson_malloc(sizeof *pooledClient);
+   pooledClient->client = client;
+   pooledClient->insertionTime = bson_get_monotonic_time();
+
+   mongoc_mutex_lock (&pool->mutex);
+   _mongoc_queue_push_tail (&pool->queue, pooledClient);
+   mongoc_mutex_unlock(&pool->mutex);
+
+   EXIT;
+}
 
 static void cleanupIdleConnections(void* context) 
 {
@@ -91,133 +209,6 @@ static void cleanupIdleConnections(void* context)
   }
 
   EXIT;
-}
-
-cnv_mongoc_client_pool_t *
-cnv_mongoc_client_pool_new (const mongoc_uri_t *uri)
-{
-   cnv_mongoc_client_pool_t *pool;
-
-   ENTRY;
-
-   if(bson_atomic_int_add(&cleanupPoolInitCount, 1) == 1) {
-     SvcBusThreadPool_init(&cleanupPool, CLEANUP_POOL_MIN_THREADS, CLEANUP_POOL_MAX_THREADS);
-   }
-
-   bson_return_val_if_fail(uri, NULL);
-
-   pool = (cnv_mongoc_client_pool_t*) bson_malloc0(sizeof *pool);
-   mongoc_mutex_init(&pool->mutex);
-   _mongoc_queue_init(&pool->queue);
-   pool->uri = mongoc_uri_copy(uri);
-
-   SvcBusThreadPoolTimer_init(&pool->cleanupTimer);
-   cnv_mongoc_client_pool_configure_cleanup_timer(pool, DEFAULT_CLEANUP_TIMER_INTERVAL, DEFAULT_MAX_ALLOWED_IDLE_TIME);
-
-   mongoc_counter_client_pools_active_inc();
-
-   RETURN(pool);
-}
-
-void
-cnv_mongoc_client_pool_destroy (cnv_mongoc_client_pool_t *pool)
-{
-   mongoc_client_t *client;
-   _pooled_mongoc_client_t *pooledClient;
-
-   ENTRY;
-
-   bson_return_if_fail(pool);
-
-   SvcBusThreadPoolTimer_stop(&pool->cleanupTimer);
-   SvcBusThreadPoolTimer_destroy(&pool->cleanupTimer);
-
-   while ((pooledClient = (_pooled_mongoc_client_t*)_mongoc_queue_pop_head(&pool->queue))) {
-     client = pooledClient->client;
-     bson_free(pooledClient);
-     mongoc_client_destroy(client);
-   }
-
-   mongoc_uri_destroy(pool->uri);
-
-   if(bson_atomic_int_add(&cleanupPoolInitCount, -1) == 0) {
-     SvcBusThreadPool_destroy(&cleanupPool);
-   }
-   mongoc_mutex_destroy(&pool->mutex);
-   bson_free(pool);
-
-   mongoc_counter_client_pools_active_dec();
-   mongoc_counter_client_pools_disposed_inc();
-
-   EXIT;
-}
-
-mongoc_client_t *
-cnv_mongoc_client_pool_pop (cnv_mongoc_client_pool_t *pool)
-{
-   mongoc_client_t *client;
-   _pooled_mongoc_client_t* pooledClient;
-
-   ENTRY;
-
-   bson_return_val_if_fail(pool, NULL);
-
-   mongoc_mutex_lock(&pool->mutex);
-
-   if (!((pooledClient = (_pooled_mongoc_client_t *) _mongoc_queue_pop_head(&pool->queue)))) {
-     // We don't want to create new client inside lock, too much contention unnecessarily
-     mongoc_mutex_unlock(&pool->mutex);
-
-     client = mongoc_client_new_from_uri(pool->uri);
-#ifdef MONGOC_ENABLE_SSL
-     if (pool->ssl_opts_set) {
-       mongoc_client_set_ssl_opts (client, &pool->ssl_opts);
-     }
-#endif
-   } else {     
-     mongoc_mutex_unlock(&pool->mutex);
-     client = pooledClient->client;
-     bson_free(pooledClient);
-   }
-
-   RETURN(client);
-}
-
-static
-void
-cnv_mongoc_client_pool_push_tail(cnv_mongoc_client_pool_t *pool,
-                                 mongoc_client_t          *client)
-{
-  _pooled_mongoc_client_t* pooledClient;
-
-  pooledClient = (_pooled_mongoc_client_t*) bson_malloc(sizeof *pooledClient);
-  pooledClient->client = client;
-  pooledClient->insertionTime = bson_get_monotonic_time();
-
-  mongoc_mutex_lock (&pool->mutex);
-  _mongoc_queue_push_tail (&pool->queue, pooledClient);
-  mongoc_mutex_unlock(&pool->mutex);
-}
-
-void
-cnv_mongoc_client_pool_push (cnv_mongoc_client_pool_t *pool,
-                             mongoc_client_t          *client)
-{
-   ENTRY;
-
-   bson_return_if_fail(pool);
-   bson_return_if_fail(client);
-
-   if ((client->cluster.state == MONGOC_CLUSTER_STATE_HEALTHY) ||
-       (client->cluster.state == MONGOC_CLUSTER_STATE_BORN)) {
-     cnv_mongoc_client_pool_push_tail(pool, client);
-   } else if (_mongoc_cluster_reconnect (&client->cluster, NULL)) {
-     cnv_mongoc_client_pool_push_tail(pool, client);
-   } else {
-     mongoc_client_destroy (client);
-   }
-
-   EXIT;
 }
 
 void
