@@ -33,7 +33,7 @@ typedef struct _cnv_mongoc_client_pool_t cnv_mongoc_client_pool_t;
 
 cnv_mongoc_client_pool_t *cnv_mongoc_client_pool_new     (const mongoc_uri_t   *uri);
 void                  cnv_mongoc_client_pool_destroy (cnv_mongoc_client_pool_t *pool);
-mongoc_client_t      *cnv_mongoc_client_pool_pop     (cnv_mongoc_client_pool_t *pool);
+mongoc_client_t      *cnv_mongoc_client_pool_pop     (cnv_mongoc_client_pool_t *pool, bson_error_t *err);
 void                  cnv_mongoc_client_pool_push    (cnv_mongoc_client_pool_t *pool,
                                                   mongoc_client_t      *client);
 #ifdef MONGOC_ENABLE_SSL
