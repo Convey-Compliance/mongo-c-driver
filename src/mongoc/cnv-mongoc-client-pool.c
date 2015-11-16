@@ -128,7 +128,7 @@ cnv_mongoc_client_pool_destroy (cnv_mongoc_client_pool_t *pool)
 }
 
 mongoc_client_t *
-cnv_mongoc_client_pool_pop (cnv_mongoc_client_pool_t *pool)
+cnv_mongoc_client_pool_pop (cnv_mongoc_client_pool_t *pool, bson_error_t *err)
 {
    mongoc_client_t *client;
    _pooled_mongoc_client_t* pooledClient;
@@ -138,20 +138,32 @@ cnv_mongoc_client_pool_pop (cnv_mongoc_client_pool_t *pool)
    BSON_ASSERT(pool);
 
    mongoc_mutex_lock(&pool->mutex);
-
    if (!(pooledClient = (_pooled_mongoc_client_t *) _mongoc_queue_pop_head(&pool->queue))) {
-     client = mongoc_client_new_from_uri(pool->uri, pool->topology);
+     mongoc_server_stream_t *stream;
+
+     mongoc_mutex_unlock(&pool->mutex);
+     client = _mongoc_client_new_from_uri(pool->uri, pool->topology);
+
 #ifdef MONGOC_ENABLE_SSL
      if (pool->ssl_opts_set) {
        mongoc_client_set_ssl_opts (client, &pool->ssl_opts);
      }
 #endif
-   } else {
-     client = pooledClient->client;
-     bson_free(pooledClient);
-   }
 
+     stream = mongoc_cluster_stream_for_reads(&client->cluster, client->read_prefs, err);
+     if( !stream ) {
+       mongoc_client_destroy(client);
+       RETURN(NULL);
+     }
+     mongoc_server_stream_cleanup(stream);
+
+     RETURN(client);
+   }
    mongoc_mutex_unlock(&pool->mutex);
+
+   client = pooledClient->client;
+   bson_free(pooledClient);
+   err->code = 0;
 
    RETURN(client);
 }
