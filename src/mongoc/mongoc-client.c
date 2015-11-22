@@ -1157,8 +1157,9 @@ mongoc_client_command_simple (mongoc_client_t           *client,
    server_stream = mongoc_cluster_stream_for_reads (cluster, read_prefs, error);
 
    if (!server_stream) {
-      bson_init (reply);
-      GOTO (done);
+     if( reply )
+       bson_init (reply);
+     GOTO (done);
    }
 
    apply_read_preferences (read_prefs, server_stream, command,
