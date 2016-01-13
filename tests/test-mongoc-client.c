@@ -4,6 +4,7 @@
 #include "mongoc-client-private.h"
 #include "mongoc-cursor-private.h"
 #include "mongoc-uri-private.h"
+#include "mongoc-util-private.h"
 
 #include "TestSuite.h"
 #include "test-conveniences.h"
@@ -12,10 +13,6 @@
 #include "mock_server/future-functions.h"
 #include "mock_server/mock-server.h"
 #include "mongoc-tests.h"
-
-#ifdef _WIN32
-# define strcasecmp _stricmp
-#endif
 
 
 #undef MONGOC_LOG_DOMAIN
@@ -615,8 +612,6 @@ test_seed_list (bool rs,
    topology = client->topology;
    td = &topology->description;
 
-   ASSERT_CMPINT (4, ==, (int) td->servers->items_len);
-
    /* a mongos load-balanced connection never removes down nodes */
    discovered_nodes_len = rs ? 1 : 4;
 
@@ -956,6 +951,160 @@ test_mongoc_client_unix_domain_socket (void *context)
 }
 
 
+static void
+test_mongoc_client_mismatched_me (void)
+{
+   mock_server_t *server;
+   mongoc_uri_t *uri;
+   mongoc_client_t *client;
+   mongoc_read_prefs_t *prefs;
+   bson_error_t error;
+   future_t *future;
+   request_t *request;
+   char *reply;
+
+   server = mock_server_new ();
+   mock_server_run (server);
+   uri = mongoc_uri_copy (mock_server_get_uri (server));
+   mongoc_uri_set_option_as_utf8 (uri, "replicaSet", "rs");
+   client = mongoc_client_new_from_uri (uri);
+   prefs = mongoc_read_prefs_new (MONGOC_READ_SECONDARY);
+
+   /* any operation should fail with server selection error */
+   future = future_client_command_simple (client,
+                                          "admin",
+                                          tmp_bson ("{'ping': 1}"),
+                                          prefs,
+                                          NULL,
+                                          &error);
+
+   request = mock_server_receives_ismaster (server);
+   reply = bson_strdup_printf (
+      "{'ok': 1,"
+      " 'setName': 'rs',"
+      " 'ismaster': false,"
+      " 'secondary': true,"
+      " 'me': 'foo.com',"  /* mismatched "me" field */
+      " 'hosts': ['%s']}",
+      mock_server_get_host_and_port (server));
+
+   mock_server_replies_simple (request, reply);
+
+   assert (!future_get_bool (future));
+   ASSERT_ERROR_CONTAINS (error,
+                          MONGOC_ERROR_SERVER_SELECTION,
+                          MONGOC_ERROR_SERVER_SELECTION_FAILURE,
+                          "No suitable servers");
+
+   bson_free (reply);
+   request_destroy (request);
+   future_destroy (future);
+   mongoc_read_prefs_destroy (prefs);
+   mongoc_client_destroy (client);
+   mongoc_uri_destroy (uri);
+   mock_server_destroy (server);
+}
+
+
+#ifdef MONGOC_ENABLE_SSL
+static void
+_test_mongoc_client_ssl_opts (bool pooled)
+{
+   char *host;
+   uint16_t port;
+   char *uri_str;
+   char *uri_str_auth;
+   char *uri_str_auth_ssl;
+   mongoc_uri_t *uri;
+   const mongoc_ssl_opt_t *ssl_opts;
+   mongoc_client_pool_t *pool = NULL;
+   mongoc_client_t *client;
+   bool ret;
+   bson_error_t error;
+   int add_ssl_to_uri;
+
+   host = test_framework_get_host ();
+   port = test_framework_get_port ();
+   uri_str = bson_strdup_printf (
+      "mongodb://%s:%d/?serverSelectionTimeoutMS=1000",
+      host, port);
+
+   uri_str_auth = test_framework_add_user_password_from_env (uri_str);
+   uri_str_auth_ssl = bson_strdup_printf ("%s&ssl=true", uri_str_auth);
+
+   ssl_opts = test_framework_get_ssl_opts ();
+
+   /* client uses SSL once SSL options are set, regardless of "ssl=true" */
+   for (add_ssl_to_uri = 0; add_ssl_to_uri < 2; add_ssl_to_uri++) {
+
+      if (add_ssl_to_uri) {
+         uri = mongoc_uri_new (uri_str_auth_ssl);
+      } else {
+         uri = mongoc_uri_new (uri_str_auth);
+      }
+
+      if (pooled) {
+         pool = mongoc_client_pool_new (uri);
+         mongoc_client_pool_set_ssl_opts (pool, ssl_opts);
+         client = mongoc_client_pool_pop (pool);
+      } else {
+         client = mongoc_client_new_from_uri (uri);
+         mongoc_client_set_ssl_opts (client, ssl_opts);
+      }
+
+      /* any operation */
+      ret = mongoc_client_command_simple (client, "admin",
+                                          tmp_bson ("{'ping': 1}"), NULL,
+                                          NULL, &error);
+
+      if (test_framework_get_ssl ()) {
+         ASSERT_OR_PRINT (ret, error);
+      } else {
+         /* TODO: CDRIVER-936 check the err msg has "SSL handshake failed" */
+         ASSERT (!ret);
+         ASSERT_CMPINT (MONGOC_ERROR_SERVER_SELECTION, ==, error.domain);
+      }
+
+      if (pooled) {
+         mongoc_client_pool_push (pool, client);
+         mongoc_client_pool_destroy (pool);
+      } else {
+         mongoc_client_destroy (client);
+      }
+
+      mongoc_uri_destroy (uri);
+   }
+
+   bson_free (uri_str_auth_ssl);
+   bson_free (uri_str_auth);
+   bson_free (uri_str);
+   bson_free (host);
+};
+
+
+static void
+test_ssl_single (void)
+{
+   _test_mongoc_client_ssl_opts (false);
+}
+
+
+static void
+test_ssl_pooled (void)
+{
+   _test_mongoc_client_ssl_opts (true);
+}
+#else
+/* MONGOC_ENABLE_SSL is not defined */
+static void
+test_mongoc_client_ssl_disabled (void)
+{
+   suppress_one_message ();
+   ASSERT (NULL == mongoc_client_new ("mongodb://host/?ssl=true"));
+}
+#endif
+
+
 void
 test_client_install (TestSuite *suite)
 {
@@ -991,9 +1140,16 @@ test_client_install (TestSuite *suite)
    TestSuite_Add (suite, "/Client/server_status", test_server_status);
    TestSuite_Add (suite, "/Client/database_names", test_get_database_names);
    TestSuite_AddFull (suite, "/Client/connect/uds", test_mongoc_client_unix_domain_socket, NULL, NULL, test_framework_skip_if_windows);
+   TestSuite_Add (suite, "/Client/mismatched_me", test_mongoc_client_mismatched_me);
 
 #ifdef TODO_CDRIVER_689
    TestSuite_Add (suite, "/Client/wire_version", test_wire_version);
 #endif
-}
 
+#ifdef MONGOC_ENABLE_SSL
+   TestSuite_Add (suite, "/Client/ssl_opts/single", test_ssl_single);
+   TestSuite_Add (suite, "/Client/ssl_opts/pooled", test_ssl_pooled);
+#else
+   TestSuite_Add (suite, "/Client/ssl_disabled", test_mongoc_client_ssl_disabled);
+#endif
+}

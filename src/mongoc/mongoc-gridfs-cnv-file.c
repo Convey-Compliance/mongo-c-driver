@@ -282,7 +282,7 @@ mongoc_gridfs_cnv_file_readv (mongoc_gridfs_cnv_file_t *file,
 {
    ssize_t ret;
 
-   if (file->file->failed = file->flags & MONGOC_CNV_DECRYPT && !file->aes_key_is_valid) {
+   if (file->flags & MONGOC_CNV_DECRYPT && !file->aes_key_is_valid) {
       bson_set_error(&file->file->error, 0, 0, ERR_MSG_INVALID_AES_KEY);
       return -1;
    }
@@ -294,7 +294,7 @@ mongoc_gridfs_cnv_file_readv (mongoc_gridfs_cnv_file_t *file,
    }
 
    if (file->flags & MONGOC_CNV_DECRYPT && ret == 0) {
-      if (file->file->failed = !check_decrypted_data_integrity (file)) {
+      if (!check_decrypted_data_integrity (file)) {
          bson_set_error(&file->file->error, 0, 0, ERR_MSG_AES_EAX_INTEGRITY_CHECK_FAILED);
          return -1;
       }
@@ -309,7 +309,7 @@ mongoc_gridfs_cnv_file_writev (mongoc_gridfs_cnv_file_t *file,
                                size_t                    iovcnt,
                                uint32_t                  timeout_msec)
 {
-   if (file->file->failed = file->flags & MONGOC_CNV_ENCRYPT && !file->aes_key_is_valid) {
+   if (file->flags & MONGOC_CNV_ENCRYPT && !file->aes_key_is_valid) {
       bson_set_error(&file->file->error, 0, 0, ERR_MSG_INVALID_AES_KEY);
       return -1;
    }

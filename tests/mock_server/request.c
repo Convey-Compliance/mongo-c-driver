@@ -23,7 +23,7 @@
 #include "../TestSuite.h"
 
 
-static bool is_command (const char *ns);
+static bool is_command_ns (const char *ns);
 
 static void request_from_query (request_t *request, const mongoc_rpc_t *rpc);
 
@@ -116,6 +116,24 @@ request_get_doc (const request_t *request,
    return _mongoc_array_index (&request->docs, const bson_t *, n);
 }
 
+bool
+request_matches_flags (const request_t *request,
+                       mongoc_query_flags_t flags)
+{
+   const mongoc_rpc_t *rpc;
+
+   assert (request);
+   rpc = &request->request_rpc;
+
+   if (rpc->query.flags != flags) {
+      MONGOC_ERROR ("request's query flags are %s, expected %s",
+                    query_flags_str (rpc->query.flags),
+                    query_flags_str (flags));
+      return false;
+   }
+
+   return true;
+}
 
 /* TODO: take file, line, function params from caller, wrap in macro */
 bool
@@ -158,10 +176,7 @@ request_matches_query (const request_t *request,
       return false;
    }
 
-   if (rpc->query.flags != flags) {
-      MONGOC_ERROR ("request's query flags are %s, expected %s",
-                    query_flags_str (rpc->query.flags), 
-                    query_flags_str (flags));
+   if (!request_matches_flags (request, flags)) {
       return false;
    }
 
@@ -532,7 +547,7 @@ request_destroy (request_t *request)
 
 
 static bool
-is_command (const char *ns)
+is_command_ns (const char *ns)
 {
    size_t len = strlen (ns);
    const char *cmd = ".$cmd";
@@ -602,6 +617,7 @@ request_from_query (request_t *request,
 {
    int32_t len;
    bson_t *query;
+   bson_t *fields;
    bson_iter_t iter;
    bson_string_t *query_as_str = bson_string_new ("OP_QUERY ");
    char *str;
@@ -612,7 +628,9 @@ request_from_query (request_t *request,
    assert (query);
    _mongoc_array_append_val (&request->docs, query);
 
-   if (is_command (request->request_rpc.query.collection)) {
+   bson_string_append_printf (query_as_str, "%s ", rpc->query.collection);
+
+   if (is_command_ns (request->request_rpc.query.collection)) {
       request->is_command = true;
 
       if (bson_iter_init (&iter, query) && bson_iter_next (&iter)) {
@@ -626,6 +644,19 @@ request_from_query (request_t *request,
    str = bson_as_json (query, NULL);
    bson_string_append (query_as_str, str);
    bson_free (str);
+
+   if (rpc->query.fields) {
+      memcpy (&len, rpc->query.fields, 4);
+      len = BSON_UINT32_FROM_LE (len);
+      fields = bson_new_from_data (rpc->query.fields, (size_t) len);
+      assert (fields);
+      _mongoc_array_append_val (&request->docs, fields);
+
+      str = bson_as_json (fields, NULL);
+      bson_string_append (query_as_str, " fields=");
+      bson_string_append (query_as_str, str);
+      bson_free (str);
+   }
 
    bson_string_append (query_as_str, " flags=");
 

@@ -18,6 +18,7 @@ MONGOC_DEF_FILES = \
 
 INST_H_FILES = \
 	src/mongoc/mongoc.h \
+	src/mongoc/mongoc-apm.h \
 	src/mongoc/mongoc-array-private.h \
 	src/mongoc/mongoc-async-private.h \
 	src/mongoc/mongoc-async-cmd-private.h \
@@ -42,6 +43,8 @@ INST_H_FILES = \
 	src/mongoc/mongoc-database.h \
 	src/mongoc/mongoc-errno-private.h \
 	src/mongoc/mongoc-error.h \
+	src/mongoc/mongoc-find-and-modify-private.h \
+	src/mongoc/mongoc-find-and-modify.h \
 	src/mongoc/mongoc-flags.h \
 	src/mongoc/mongoc-gridfs-file-list-private.h \
 	src/mongoc/mongoc-gridfs-file-list.h \
@@ -66,6 +69,8 @@ INST_H_FILES = \
 	src/mongoc/mongoc-opcode.h \
 	src/mongoc/mongoc-opcode-private.h \
 	src/mongoc/mongoc-queue-private.h \
+	src/mongoc/mongoc-read-concern-private.h \
+	src/mongoc/mongoc-read-concern.h \
 	src/mongoc/mongoc-read-prefs-private.h \
 	src/mongoc/mongoc-read-prefs.h \
 	src/mongoc/mongoc-rpc-private.h \
@@ -73,6 +78,7 @@ INST_H_FILES = \
 	src/mongoc/mongoc-scram-private.h \
 	src/mongoc/mongoc-server-description.h \
 	src/mongoc/mongoc-server-description-private.h \
+	src/mongoc/mongoc-server-stream-private.h \
 	src/mongoc/mongoc-set-private.h \
 	src/mongoc/mongoc-socket.h \
 	src/mongoc/mongoc-socket-private.h \
@@ -124,6 +130,7 @@ MONGOC_SOURCES_SHARED += \
 	src/mongoc/mongoc-cursor-cursorid.c \
 	src/mongoc/mongoc-cursor-transform.c \
 	src/mongoc/mongoc-database.c \
+	src/mongoc/mongoc-find-and-modify.c \
 	src/mongoc/mongoc-host-list.c \
 	src/mongoc/mongoc-init.c \
 	src/mongoc/mongoc-gridfs.c \
@@ -138,6 +145,7 @@ MONGOC_SOURCES_SHARED += \
 	src/mongoc/mongoc-memcmp.c \
 	src/mongoc/mongoc-opcode.c \
 	src/mongoc/mongoc-queue.c \
+	src/mongoc/mongoc-read-concern.c \
 	src/mongoc/mongoc-read-prefs.c \
 	src/mongoc/mongoc-rpc.c \
 	src/mongoc/mongoc-server-description.c \

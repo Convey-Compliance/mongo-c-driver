@@ -23,6 +23,7 @@
 #include "mongoc-topology-private.h"
 #include "mongoc-client-private.h"
 #include "mongoc-uri-private.h"
+#include "mongoc-util-private.h"
 
 #include "mongoc-tests.h"
 #include "TestSuite.h"
@@ -38,9 +39,11 @@ extern void test_client_install                  (TestSuite *suite);
 extern void test_client_pool_install             (TestSuite *suite);
 extern void test_cluster_install                 (TestSuite *suite);
 extern void test_collection_install              (TestSuite *suite);
+extern void test_collection_find_install         (TestSuite *suite);
 extern void test_cursor_install                  (TestSuite *suite);
 extern void test_database_install                (TestSuite *suite);
 extern void test_exhaust_install                 (TestSuite *suite);
+extern void test_find_and_modify_install         (TestSuite *suite);
 extern void test_gridfs_file_page_install        (TestSuite *suite);
 extern void test_gridfs_install                  (TestSuite *suite);
 extern void test_list_install                    (TestSuite *suite);
@@ -72,11 +75,6 @@ extern void test_stream_tls_error_install        (TestSuite *suite);
 #endif
 
 extern void test_gridfs_cnv_file_install         (TestSuite *suite);
-
-
-#ifdef _WIN32
-# define strcasecmp _stricmp
-#endif
 
 
 static int gSuppressCount;
@@ -449,7 +447,7 @@ test_framework_add_user_password (const char *uri_str,
  *
  *--------------------------------------------------------------------------
  */
-static char *
+char *
 test_framework_add_user_password_from_env (const char *uri_str)
 {
    char *user;
@@ -856,6 +854,30 @@ test_framework_client_new ()
 }
 
 
+#ifdef MONGOC_ENABLE_SSL
+/*
+ *--------------------------------------------------------------------------
+ *
+ * test_framework_get_ssl_opts --
+ *
+ *       Get options for connecting to mongod over SSL (even if mongod
+ *       isn't actually SSL-enabled).
+ *
+ * Returns:
+ *       A pointer to constant global SSL-test options.
+ *
+ * Side effects:
+ *       None.
+ *
+ *--------------------------------------------------------------------------
+ */
+const mongoc_ssl_opt_t *
+test_framework_get_ssl_opts (void)
+{
+   return &gSSLOptions;
+}
+#endif
+
 /*
  *--------------------------------------------------------------------------
  *
@@ -872,7 +894,7 @@ test_framework_client_new ()
  *
  *--------------------------------------------------------------------------
  */
-static void
+void
 test_framework_set_pool_ssl_opts (mongoc_client_pool_t *pool)
 {
    assert (pool);
@@ -979,12 +1001,6 @@ test_framework_is_replset (void)
    bson_destroy (&reply);
 
    return is_replset;
-}
-
-int
-test_framework_skip_if_single (void)
-{
-   return (test_framework_is_mongos () || test_framework_is_replset());
 }
 
 bool
@@ -1154,6 +1170,12 @@ test_version_cmp (void)
 }
 
 int
+test_framework_skip_if_single (void)
+{
+   return (test_framework_is_mongos () || test_framework_is_replset());
+}
+
+int
 test_framework_skip_if_mongos (void)
 {
    return test_framework_is_mongos() ? 0 : 1;
@@ -1163,6 +1185,24 @@ int
 test_framework_skip_if_replset (void)
 {
    return test_framework_is_replset() ? 0 : 1;
+}
+
+int
+test_framework_skip_if_not_single (void)
+{
+   return !test_framework_skip_if_single ();
+}
+
+int
+test_framework_skip_if_not_mongos (void)
+{
+   return !test_framework_skip_if_mongos ();
+}
+
+int
+test_framework_skip_if_not_replset (void)
+{
+   return !test_framework_skip_if_replset ();
 }
 
 int test_framework_skip_if_max_version_version_less_than_4 (void)
@@ -1209,9 +1249,11 @@ main (int   argc,
    test_bulk_install (&suite);
    test_cluster_install (&suite);
    test_collection_install (&suite);
+   test_collection_find_install (&suite);
    test_cursor_install (&suite);
    test_database_install (&suite);
    test_exhaust_install (&suite);
+   test_find_and_modify_install (&suite);
    test_gridfs_install (&suite);
    test_gridfs_file_page_install (&suite);
    test_list_install (&suite);
