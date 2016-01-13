@@ -9,6 +9,7 @@
 #include "mongoc-server-description-private.h"
 #include "mongoc-topology-description-private.h"
 #include "mongoc-topology-private.h"
+#include "mongoc-util-private.h"
 
 #include "TestSuite.h"
 #include "test-conveniences.h"
@@ -18,13 +19,10 @@
 
 #ifdef _MSC_VER
 #define PATH_MAX 1024
+#define realpath(path, expanded) GetFullPathName(path, PATH_MAX, expanded, NULL)
 #endif
 
 #define MAX_NUM_TESTS 100
-
-#if defined(_WIN32) && !defined(strcasecmp)
-# define strcasecmp _stricmp
-#endif
 
 /* caller must clean up the returned description */
 static mongoc_server_description_t *
@@ -66,6 +64,25 @@ _topology_has_description(mongoc_topology_description_t *topology,
          }
       } else if (strcmp("type", bson_iter_key (&server_iter)) == 0) {
          assert (sd->type == server_type_from_test(bson_iter_utf8(&server_iter, NULL)));
+      } else if (strcmp("setVersion", bson_iter_key (&server_iter)) == 0) {
+         int64_t expected_set_version;
+         if (BSON_ITER_HOLDS_NULL (&server_iter)) {
+            expected_set_version = MONGOC_NO_SET_VERSION;
+         } else {
+            expected_set_version = bson_iter_as_int64 (&server_iter);
+         }
+         assert (sd->set_version == expected_set_version);
+      } else if (strcmp("electionId", bson_iter_key (&server_iter)) == 0) {
+         bson_oid_t expected_oid;
+         if (BSON_ITER_HOLDS_NULL (&server_iter)) {
+            bson_oid_init_from_string (&expected_oid,
+                                       "000000000000000000000000");
+         } else {
+            ASSERT (BSON_ITER_HOLDS_OID (&server_iter));
+            bson_oid_copy (bson_iter_oid (&server_iter), &expected_oid);
+         }
+
+         ASSERT_CMPOID (&sd->election_id, &expected_oid);
       } else {
          fprintf (stderr, "ERROR: unparsed field %s\n", bson_iter_key(&server_iter));
          assert (0);
