@@ -30,6 +30,9 @@
 #include "test-conveniences.h"
 #include "test-libmongoc.h"
 
+#ifdef _WIN32
+extern void test_gridfs_cnv_file_install         (TestSuite *suite);
+#endif
 
 extern void test_array_install                   (TestSuite *suite);
 extern void test_async_install                   (TestSuite *suite);
@@ -73,8 +76,6 @@ extern void test_x509_install                    (TestSuite *suite);
 extern void test_stream_tls_install              (TestSuite *suite);
 extern void test_stream_tls_error_install        (TestSuite *suite);
 #endif
-
-extern void test_gridfs_cnv_file_install         (TestSuite *suite);
 
 
 static int gSuppressCount;
@@ -1240,6 +1241,9 @@ main (int   argc,
    TestSuite_Init (&suite, "", argc, argv);
    TestSuite_Add (&suite, "/TestSuite/version_cmp", test_version_cmp);
 
+#ifdef _WIN32
+   test_gridfs_cnv_file_install (&suite);
+#endif
    test_array_install (&suite);
    test_async_install (&suite);
    test_buffer_install (&suite);
@@ -1277,7 +1281,6 @@ main (int   argc,
    test_usleep_install (&suite);
    //test_version_install (&suite);
    test_write_concern_install (&suite);
-   test_gridfs_cnv_file_install (&suite);
 #ifdef MONGOC_ENABLE_SSL
    test_x509_install (&suite);
    test_stream_tls_install (&suite);
