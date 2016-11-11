@@ -90,3 +90,5 @@ test-replica-set-ssl
 test-secondary
 test-sharded-cluster
 test-x509
+src/libbson
+
