@@ -17,7 +17,7 @@
 #ifndef MONGOC_GRIDFS_FILE_PAGE_PRIVATE_H
 #define MONGOC_GRIDFS_FILE_PAGE_PRIVATE_H
 
-#if !defined (MONGOC_I_AM_A_DRIVER) && !defined (MONGOC_COMPILATION)
+#if !defined (MONGOC_COMPILATION)
 #error "Only <mongoc.h> can be included directly."
 #endif
 
@@ -51,7 +51,7 @@ int32_t                    _mongoc_gridfs_file_page_read     (mongoc_gridfs_file
 int32_t                    _mongoc_gridfs_file_page_write    (mongoc_gridfs_file_page_t *page,
                                                               const void                *src,
                                                               uint32_t                   len);
-bool                       _mongoc_gridfs_file_page_memset0  (mongoc_gridfs_file_page_t *page,
+uint32_t                   _mongoc_gridfs_file_page_memset0  (mongoc_gridfs_file_page_t *page,
                                                               uint32_t                   len);
 uint32_t                   _mongoc_gridfs_file_page_tell     (mongoc_gridfs_file_page_t *page);
 const uint8_t             *_mongoc_gridfs_file_page_get_data (mongoc_gridfs_file_page_t *page);

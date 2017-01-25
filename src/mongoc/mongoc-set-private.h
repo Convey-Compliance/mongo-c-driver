@@ -17,7 +17,7 @@
 #ifndef MONGOC_SET_PRIVATE_H
 #define MONGOC_SET_PRIVATE_H
 
-#if !defined (MONGOC_I_AM_A_DRIVER) && !defined (MONGOC_COMPILATION)
+#if !defined (MONGOC_COMPILATION)
 #error "Only <mongoc.h> can be included directly."
 #endif
 
@@ -68,6 +68,11 @@ mongoc_set_get (mongoc_set_t *set,
 void *
 mongoc_set_get_item (mongoc_set_t *set,
                      int           idx);
+
+void *
+mongoc_set_get_item_and_id (mongoc_set_t *set,
+                            int           idx,
+                            uint32_t     *id /* OUT */);
 
 void
 mongoc_set_destroy (mongoc_set_t *set);

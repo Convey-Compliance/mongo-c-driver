@@ -17,7 +17,7 @@
 #ifndef MONGOC_ASYNC_PRIVATE_H
 #define MONGOC_ASYNC_PRIVATE_H
 
-#if !defined (MONGOC_I_AM_A_DRIVER) && !defined (MONGOC_COMPILATION)
+#if !defined (MONGOC_COMPILATION)
 #error "Only <mongoc.h> can be included directly."
 #endif
 
@@ -63,9 +63,9 @@ mongoc_async_new ();
 void
 mongoc_async_destroy (mongoc_async_t *async);
 
-bool
+void
 mongoc_async_run (mongoc_async_t *async,
-                  int32_t         timeout_msec);
+                  int64_t         timeout_msec);
 
 struct _mongoc_async_cmd *
 mongoc_async_cmd (mongoc_async_t          *async,
@@ -76,7 +76,7 @@ mongoc_async_cmd (mongoc_async_t          *async,
                   const bson_t            *cmd,
                   mongoc_async_cmd_cb_t    cb,
                   void                    *cb_data,
-                  int32_t                  timeout_msec);
+                  int64_t                  timeout_msec);
 
 BSON_END_DECLS
 

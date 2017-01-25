@@ -17,7 +17,7 @@
 #ifndef MONGOC_COUNTERS_PRIVATE_H
 #define MONGOC_COUNTERS_PRIVATE_H
 
-#if !defined (MONGOC_I_AM_A_DRIVER) && !defined (MONGOC_COMPILATION)
+#if !defined (MONGOC_COMPILATION)
 #error "Only <mongoc.h> can be included directly."
 #endif
 
@@ -89,9 +89,12 @@ _mongoc_get_cpu_count (void)
  static BSON_INLINE unsigned
  _mongoc_sched_getcpu (void)
  {
-    volatile uint32_t rax, rdx, aux;
-    __asm__ volatile ("rdtscp\n" : "=a" (rax), "=d" (rdx), "=c" (aux) : : );
-    return aux;
+    volatile uint32_t rax, rdx, rcx;
+    __asm__ volatile ("rdtscp\n" : "=a" (rax), "=d" (rdx), "=c" (rcx) : : );
+    unsigned node_id, core_id;
+    // node_id = (rcx & 0xFFF000)>>12;  // node_id is unused
+    core_id = rcx & 0xFFF;
+    return core_id;
  }
 #elif defined(HAVE_SCHED_GETCPU)
 # define _mongoc_sched_getcpu sched_getcpu

@@ -30,7 +30,6 @@ struct _mock_rs_t {
    int n_arbiters;
    int32_t max_wire_version;
    int64_t request_timeout_msec;
-   bool verbose;
 
    mock_server_t *primary;
    mongoc_array_t secondaries;
@@ -134,38 +133,10 @@ mock_rs_with_autoismaster (int32_t max_wire_version,
    rs->n_secondaries = n_secondaries;
    rs->n_arbiters = n_arbiters;
    rs->request_timeout_msec = 10 * 1000;
-   _mongoc_array_init (&rs->secondaries, sizeof (mock_server_t *));
-   _mongoc_array_init (&rs->arbiters, sizeof (mock_server_t *));
-   _mongoc_array_init (&rs->servers, sizeof (mock_server_t *));
    rs->q = q_new ();
-   rs->verbose = test_framework_getenv_bool ("MONGOC_TEST_SERVER_VERBOSE");
 
    return rs;   
 }
-
-
-/*--------------------------------------------------------------------------
- *
- * mock_rs_set_verbose --
- *
- *       Tell the replica set whether to log during normal operation.
- *
- *--------------------------------------------------------------------------
- */
-
-void
-mock_rs_set_verbose (mock_rs_t *rs,
-                     bool verbose)
-{
-   int i;
-
-   rs->verbose = true;
-
-   for (i = 0; i < rs->servers.len; i++) {
-      mock_server_set_verbose (get_server (&rs->servers, i), verbose);
-   }
-}
-
 
 
 /*--------------------------------------------------------------------------
@@ -263,6 +234,7 @@ mock_rs_run (mock_rs_t *rs)
    }
 
    /* add all servers to replica set */
+   _mongoc_array_init (&rs->servers, sizeof(mock_server_t *));
    if (rs->has_primary) {
       _mongoc_array_append_val (&rs->servers, rs->primary);
    }
@@ -314,10 +286,6 @@ mock_rs_run (mock_rs_t *rs)
 
    for (i = 0; i < rs->n_arbiters; i++) {
       mock_server_auto_ismaster (get_server (&rs->arbiters, i), ismaster_json);
-   }
-
-   for (i = 0; i < rs->servers.len; i++) {
-      mock_server_set_verbose (get_server (&rs->servers, i), rs->verbose);
    }
 
    bson_free (ismaster_json);
@@ -393,7 +361,7 @@ mock_rs_receives_query (mock_rs_t *rs,
                         const char *ns,
                         mongoc_query_flags_t flags,
                         uint32_t skip,
-                        uint32_t n_return,
+                        int32_t n_return,
                         const char *query_json,
                         const char *fields_json)
 {
@@ -500,9 +468,13 @@ mock_rs_receives_command (mock_rs_t *rs,
                                            formatted_command_json,
                                            NULL,
                                            true)) {
+      bson_free (formatted_command_json);
       request_destroy (request);
       return NULL;
    }
+
+   bson_free (ns);
+   bson_free (formatted_command_json);
 
    return request;
 }
@@ -568,7 +540,7 @@ mock_rs_receives_insert (mock_rs_t *rs,
 request_t *
 mock_rs_receives_getmore (mock_rs_t *rs,
                           const char *ns,
-                          uint32_t n_return,
+                          int32_t n_return,
                           int64_t cursor_id)
 {
    request_t *request;

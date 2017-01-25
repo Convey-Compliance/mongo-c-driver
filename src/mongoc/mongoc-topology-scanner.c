@@ -15,11 +15,16 @@
  */
 
 #include <bson.h>
+#include <bson-string.h>
 
+#include "mongoc-config.h"
 #include "mongoc-error.h"
-#include "mongoc-trace.h"
+#include "mongoc-trace-private.h"
 #include "mongoc-topology-scanner-private.h"
 #include "mongoc-stream-socket.h"
+
+#include "mongoc-handshake.h"
+#include "mongoc-handshake-private.h"
 
 #ifdef MONGOC_ENABLE_SSL
 #include "mongoc-stream-tls.h"
@@ -33,6 +38,7 @@
 #undef MONGOC_LOG_DOMAIN
 #define MONGOC_LOG_DOMAIN "topology_scanner"
 
+/* forward declarations */
 static void
 mongoc_topology_scanner_ismaster_handler (mongoc_async_cmd_result_t async_status,
                                           const bson_t             *ismaster_response,
@@ -40,20 +46,106 @@ mongoc_topology_scanner_ismaster_handler (mongoc_async_cmd_result_t async_status
                                           void                     *data,
                                           bson_error_t             *error);
 
+static void
+_mongoc_topology_scanner_monitor_heartbeat_started (const mongoc_topology_scanner_t *ts,
+                                                    const mongoc_host_list_t        *host);
+
+static void
+_mongoc_topology_scanner_monitor_heartbeat_succeeded (const mongoc_topology_scanner_t *ts,
+                                                      const mongoc_host_list_t        *host,
+                                                      const bson_t                    *reply);
+
+static void
+_mongoc_topology_scanner_monitor_heartbeat_failed (const mongoc_topology_scanner_t *ts,
+                                                   const mongoc_host_list_t        *host,
+                                                   const bson_error_t              *error);
+
+static void
+_add_ismaster (bson_t *cmd)
+{
+   BSON_APPEND_INT32 (cmd, "isMaster", 1);
+}
+
+static bool
+_build_ismaster_with_handshake (mongoc_topology_scanner_t *ts)
+{
+   bson_t *doc = &ts->ismaster_cmd_with_handshake;
+   bson_t handshake_doc;
+   bool res;
+
+   _add_ismaster (doc);
+
+   BSON_APPEND_DOCUMENT_BEGIN (doc, HANDSHAKE_FIELD, &handshake_doc);
+   res = _mongoc_handshake_build_doc_with_application (&handshake_doc,
+                                                       ts->appname);
+   bson_append_document_end (doc, &handshake_doc);
+
+   /* Return whether the handshake doc fit the size limit */
+   return res;
+}
+
+static bson_t *
+_get_ismaster_doc (mongoc_topology_scanner_t      *ts,
+                   mongoc_topology_scanner_node_t *node)
+{
+   if (node->last_used != -1 && node->last_failed == -1) {
+      /* The node's been used before and not failed recently */
+      return &ts->ismaster_cmd;
+   }
+
+   /* If this is the first time using the node or if it's the first time
+    * using it after a failure, build handshake doc */
+   if (bson_empty (&ts->ismaster_cmd_with_handshake)) {
+      ts->handshake_ok_to_send = _build_ismaster_with_handshake (ts);
+      if (!ts->handshake_ok_to_send) {
+         MONGOC_WARNING ("Handshake doc too big, not including in isMaster");
+      }
+   }
+
+   /* If the doc turned out to be too big */
+   if (!ts->handshake_ok_to_send) {
+      return &ts->ismaster_cmd;
+   }
+
+   return &ts->ismaster_cmd_with_handshake;
+}
+
+static void
+_begin_ismaster_cmd (mongoc_topology_scanner_t      *ts,
+                     mongoc_topology_scanner_node_t *node,
+                     int64_t                         timeout_msec)
+{
+   const bson_t *ismaster_cmd_to_send = _get_ismaster_doc (ts, node);
+
+   node->cmd = mongoc_async_cmd (
+      ts->async, node->stream, ts->setup,
+      node->host.host, "admin",
+      ismaster_cmd_to_send,
+      &mongoc_topology_scanner_ismaster_handler,
+      node, timeout_msec);
+}
+
+
 mongoc_topology_scanner_t *
-mongoc_topology_scanner_new (const mongoc_uri_t          *uri,
-                             mongoc_topology_scanner_cb_t cb,
-                             void                        *data)
+mongoc_topology_scanner_new (const mongoc_uri_t                     *uri,
+                             mongoc_topology_scanner_setup_err_cb_t  setup_err_cb,
+                             mongoc_topology_scanner_cb_t            cb,
+                             void                                   *data)
 {
    mongoc_topology_scanner_t *ts = (mongoc_topology_scanner_t *)bson_malloc0 (sizeof (*ts));
 
    ts->async = mongoc_async_new ();
-   bson_init (&ts->ismaster_cmd);
-   BSON_APPEND_INT32 (&ts->ismaster_cmd, "isMaster", 1);
 
+   bson_init (&ts->ismaster_cmd);
+   _add_ismaster (&ts->ismaster_cmd);
+   bson_init (&ts->ismaster_cmd_with_handshake);
+
+   ts->setup_err_cb = setup_err_cb;
    ts->cb = cb;
    ts->cb_data = data;
    ts->uri = uri;
+   ts->appname = NULL;
+   ts->handshake_ok_to_send = false;
 
    return ts;
 }
@@ -89,6 +181,10 @@ mongoc_topology_scanner_destroy (mongoc_topology_scanner_t *ts)
 
    mongoc_async_destroy (ts->async);
    bson_destroy (&ts->ismaster_cmd);
+   bson_destroy (&ts->ismaster_cmd_with_handshake);
+
+   /* This field can be set by a mongoc_client */
+   bson_free ((char *) ts->appname);
 
    bson_free (ts);
 }
@@ -107,6 +203,7 @@ mongoc_topology_scanner_add (mongoc_topology_scanner_t *ts,
    node->id = id;
    node->ts = ts;
    node->last_failed = -1;
+   node->last_used = -1;
 
    DL_APPEND(ts->nodes, node);
 
@@ -127,12 +224,7 @@ mongoc_topology_scanner_add_and_scan (mongoc_topology_scanner_t *ts,
 
    /* begin non-blocking connection, don't wait for success */
    if (node && mongoc_topology_scanner_node_setup (node, &node->last_error)) {
-      node->cmd = mongoc_async_cmd (
-         ts->async, node->stream, ts->setup,
-         node->host.host, "admin",
-         &ts->ismaster_cmd,
-         &mongoc_topology_scanner_ismaster_handler,
-         node, (int32_t) timeout_msec);
+      _begin_ismaster_cmd (ts, node, timeout_msec);
    }
 
    /* if setup fails the node stays in the scanner. destroyed after the scan. */
@@ -189,8 +281,6 @@ mongoc_topology_scanner_node_destroy (mongoc_topology_scanner_node_t *node, bool
  * mongoc_topology_scanner_get_node --
  *
  *      Return the scanner node with the given id.
- *
- *      NOTE: only use this method when single-threaded!
  *
  *--------------------------------------------------------------------------
  */
@@ -256,12 +346,14 @@ mongoc_topology_scanner_ismaster_handler (mongoc_async_cmd_result_t async_status
                                           bson_error_t             *error)
 {
    mongoc_topology_scanner_node_t *node;
+   mongoc_topology_scanner_t *ts;
    int64_t now;
    const char *message;
 
    BSON_ASSERT (data);
 
-   node = (mongoc_topology_scanner_node_t *)data;
+   node = (mongoc_topology_scanner_node_t *) data;
+   ts = node->ts;
    node->cmd = NULL;
 
    if (node->retired) {
@@ -277,24 +369,35 @@ mongoc_topology_scanner_ismaster_handler (mongoc_async_cmd_result_t async_status
       mongoc_stream_failed (node->stream);
       node->stream = NULL;
       node->last_failed = now;
-      message = async_status == MONGOC_ASYNC_CMD_TIMEOUT ?
-                "connection error" :
-                "connection timeout";
+      if (error->code) {
+         message = error->message;
+      } else {
+         if (async_status == MONGOC_ASYNC_CMD_TIMEOUT) {
+            message = "connection timeout";
+         } else {
+            message = "connection error";
+         }
+      }
+
       bson_set_error (&node->last_error,
                       MONGOC_ERROR_CLIENT,
                       MONGOC_ERROR_STREAM_CONNECT,
                       "%s calling ismaster on \'%s\'",
                       message,
                       node->host.host_and_port);
+      
+      _mongoc_topology_scanner_monitor_heartbeat_failed (ts, &node->host,
+                                                         &node->last_error);
    } else {
       node->last_failed = -1;
+      _mongoc_topology_scanner_monitor_heartbeat_succeeded (ts, &node->host,
+                                                            ismaster_response);
    }
 
    node->last_used = now;
-
-   node->ts->cb (node->id, ismaster_response, rtt_msec,
-                 node->ts->cb_data, error);
+   ts->cb (node->id, ismaster_response, rtt_msec, ts->cb_data, error);
 }
+
 
 /*
  *--------------------------------------------------------------------------
@@ -464,6 +567,8 @@ mongoc_topology_scanner_node_setup (mongoc_topology_scanner_node_t *node,
 {
    mongoc_stream_t *sock_stream;
 
+   _mongoc_topology_scanner_monitor_heartbeat_started (node->ts, &node->host);
+
    if (node->stream) { return true; }
 
    BSON_ASSERT (!node->retired);
@@ -480,14 +585,23 @@ mongoc_topology_scanner_node_setup (mongoc_topology_scanner_node_t *node,
 
 #ifdef MONGOC_ENABLE_SSL
       if (sock_stream && node->ts->ssl_opts) {
-         sock_stream = mongoc_stream_tls_new (sock_stream, node->ts->ssl_opts, 1);
+         mongoc_stream_t *original = sock_stream;
+
+         sock_stream = mongoc_stream_tls_new_with_hostname (sock_stream,
+                                                            node->host.host,
+                                                            node->ts->ssl_opts, 1);
+         if (!sock_stream) {
+            mongoc_stream_destroy (original);
+         }
       }
 #endif
    }
 
    if (!sock_stream) {
-      /* Pass a rtt of -1 if we couldn't initialize a stream in node_setup */
-      node->ts->cb (node->id, NULL, -1, node->ts->cb_data, error);
+      _mongoc_topology_scanner_monitor_heartbeat_failed (node->ts, &node->host,
+                                                         error);
+
+      node->ts->setup_err_cb (node->id, node->ts->cb_data, error);
       return false;
    }
 
@@ -524,7 +638,7 @@ mongoc_topology_scanner_node_setup (mongoc_topology_scanner_node_t *node,
 
 void
 mongoc_topology_scanner_start (mongoc_topology_scanner_t *ts,
-                               int32_t timeout_msec,
+                               int64_t timeout_msec,
                                bool obey_cooldown)
 {
    mongoc_topology_scanner_node_t *node, *tmp;
@@ -534,6 +648,7 @@ mongoc_topology_scanner_start (mongoc_topology_scanner_t *ts,
    if (ts->in_progress) {
       return;
    }
+
 
    if (obey_cooldown) {
       /* when current cooldown period began */
@@ -546,18 +661,50 @@ mongoc_topology_scanner_start (mongoc_topology_scanner_t *ts,
       /* check node if it last failed before current cooldown period began */
       if (node->last_failed < cooldown) {
          if (mongoc_topology_scanner_node_setup (node, &node->last_error)) {
-
             BSON_ASSERT (!node->cmd);
-
-            node->cmd = mongoc_async_cmd (
-               ts->async, node->stream, ts->setup,
-               node->host.host, "admin",
-               &ts->ismaster_cmd,
-               &mongoc_topology_scanner_ismaster_handler,
-               node, timeout_msec);
+            _begin_ismaster_cmd (ts, node, timeout_msec);
          }
       }
    }
+}
+
+/*
+ *--------------------------------------------------------------------------
+ *
+ * mongoc_topology_scanner_finish_scan --
+ *
+ *      Summarizes all scanner node errors into one error message.
+ *
+ *--------------------------------------------------------------------------
+ */
+
+void
+_mongoc_topology_scanner_finish (mongoc_topology_scanner_t *ts)
+{
+   mongoc_topology_scanner_node_t *node, *tmp;
+   bson_error_t *error = &ts->error;
+   bson_string_t *msg;
+
+   memset (&ts->error, 0, sizeof (bson_error_t));
+
+   msg = bson_string_new (NULL);
+
+   DL_FOREACH_SAFE (ts->nodes, node, tmp) {
+      if (node->last_error.code) {
+         if (msg->len) {
+            bson_string_append_c (msg, ' ');
+         }
+
+         bson_string_append_printf (msg, "[%s]", node->last_error.message);
+
+         /* last error domain and code win */
+         error->domain = node->last_error.domain;
+         error->code = node->last_error.code;
+      }
+   }
+
+   bson_strncpy ((char *) &error->message, msg->str, sizeof (error->message));
+   bson_string_free (msg, true);
 }
 
 /*
@@ -575,58 +722,31 @@ mongoc_topology_scanner_start (mongoc_topology_scanner_t *ts,
  *--------------------------------------------------------------------------
  */
 
-bool
+void
 mongoc_topology_scanner_work (mongoc_topology_scanner_t *ts,
-                              int32_t                    timeout_msec)
+                              int64_t                    timeout_msec)
 {
-   bool r;
-
-   r = mongoc_async_run (ts->async, timeout_msec);
-
-   if (! r) {
-      ts->in_progress = false;
-   }
-
-   return r;
+   mongoc_async_run (ts->async, timeout_msec);
 }
 
 /*
  *--------------------------------------------------------------------------
  *
- * mongoc_topology_scanner_sum_errors --
+ * mongoc_topology_scanner_get_error --
  *
- *      Summarizes all scanner node errors into one error message
+ *      Copy the scanner's current error; which may no-error (code 0).
  *
  *--------------------------------------------------------------------------
  */
 
 void
-mongoc_topology_scanner_sum_errors (mongoc_topology_scanner_t *ts,
-                                    bson_error_t              *error)
+mongoc_topology_scanner_get_error (mongoc_topology_scanner_t *ts,
+                                   bson_error_t              *error)
 {
-   mongoc_topology_scanner_node_t *node, *tmp;
+   BSON_ASSERT (ts);
+   BSON_ASSERT (error);
 
-   DL_FOREACH_SAFE (ts->nodes, node, tmp) {
-      if (node->last_error.code) {
-         char *msg = NULL;
-
-         if (error->code) {
-            msg = bson_strdup(error->message);
-         }
-
-         bson_set_error(error,
-                        MONGOC_ERROR_SERVER_SELECTION,
-                        MONGOC_ERROR_SERVER_SELECTION_FAILURE,
-                        "%s[%s] ",
-                        msg ? msg : "", node->last_error.message);
-         if (msg) {
-            bson_free (msg);
-         }
-      }
-   }
-   if (error->code) {
-      error->message[strlen(error->message)-1] = '\0';
-   }
+   memcpy (error, &ts->error, sizeof (bson_error_t));
 }
 
 /*
@@ -652,3 +772,66 @@ mongoc_topology_scanner_reset (mongoc_topology_scanner_t *ts)
    }
 }
 
+/*
+ * Set a field in the topology scanner.
+ */
+bool
+_mongoc_topology_scanner_set_appname (mongoc_topology_scanner_t *ts,
+                                      const char                *appname)
+{
+   if (!_mongoc_handshake_appname_is_valid (appname)) {
+      MONGOC_ERROR ("Cannot set appname: %s is invalid", appname);
+      return false;
+   }
+
+   if (ts->appname != NULL) {
+      MONGOC_ERROR ("Cannot set appname more than once");
+      return false;
+   }
+
+   ts->appname = bson_strdup (appname);
+   return true;
+}
+
+/* SDAM Monitoring Spec: send HeartbeatStartedEvent */
+static void
+_mongoc_topology_scanner_monitor_heartbeat_started (const mongoc_topology_scanner_t *ts,
+                                                    const mongoc_host_list_t        *host)
+{
+   if (ts->apm_callbacks.server_heartbeat_started) {
+      mongoc_apm_server_heartbeat_started_t event;
+      event.host = host;
+      event.context = ts->apm_context;
+      ts->apm_callbacks.server_heartbeat_started (&event);
+   }
+}
+
+/* SDAM Monitoring Spec: send HeartbeatSucceededEvent */
+static void
+_mongoc_topology_scanner_monitor_heartbeat_succeeded (const mongoc_topology_scanner_t *ts,
+                                                      const mongoc_host_list_t        *host,
+                                                      const bson_t                    *reply)
+{
+   if (ts->apm_callbacks.server_heartbeat_succeeded) {
+      mongoc_apm_server_heartbeat_succeeded_t event;
+      event.host = host;
+      event.context = ts->apm_context;
+      event.reply = reply;
+      ts->apm_callbacks.server_heartbeat_succeeded (&event);
+   }
+}
+
+/* SDAM Monitoring Spec: send HeartbeatFailedEvent */
+static void
+_mongoc_topology_scanner_monitor_heartbeat_failed (const mongoc_topology_scanner_t *ts,
+                                                   const mongoc_host_list_t        *host,
+                                                   const bson_error_t              *error)
+{
+   if (ts->apm_callbacks.server_heartbeat_failed) {
+      mongoc_apm_server_heartbeat_failed_t event;
+      event.host = host;
+      event.context = ts->apm_context;
+      event.error = error;
+      ts->apm_callbacks.server_heartbeat_failed (&event);
+   }
+}

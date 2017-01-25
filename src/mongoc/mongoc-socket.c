@@ -23,7 +23,7 @@
 #include "mongoc-socket-private.h"
 #include "mongoc-host-list.h"
 #include "mongoc-socket-private.h"
-#include "mongoc-trace.h"
+#include "mongoc-trace-private.h"
 
 #undef MONGOC_LOG_DOMAIN
 #define MONGOC_LOG_DOMAIN "socket"
@@ -411,7 +411,7 @@ mongoc_socket_accept_ex (mongoc_socket_t *sock,      /* IN */
                          uint16_t *port)             /* OUT */
 {
    mongoc_socket_t *client;
-   struct sockaddr_in addr;
+   struct sockaddr_in addr = { 0 };
    socklen_t addrlen = sizeof addr;
    bool try_again = false;
    bool failed = false;
@@ -1122,7 +1122,7 @@ mongoc_socket_sendv (mongoc_socket_t  *sock,      /* IN */
           * Subtract the sent amount from what we still need to send.
           */
          while ((cur < iovcnt) && (sent >= (ssize_t)iov [cur].iov_len)) {
-            TRACE("still got bytes left: sent -= iov_len: %ld -= %ld", sent, iov[cur+1].iov_len);
+            TRACE("still got bytes left: sent -= iov_len: %ld -= %ld", sent, iov[cur].iov_len);
             sent -= iov [cur++].iov_len;
          }
 

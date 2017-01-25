@@ -22,9 +22,7 @@
 #include "mongoc-uri.h"
 
 #ifdef MONGOC_ENABLE_SSL
-
 #include "mongoc-ssl.h"
-
 #endif
 
 #include "request.h"
@@ -39,6 +37,8 @@ typedef void (*destructor_t) (void *data);
 mock_server_t *mock_server_new ();
 
 mock_server_t *mock_server_with_autoismaster (int32_t max_wire_version);
+
+mock_server_t *mock_mongos_new (int32_t max_wire_version);
 
 mock_server_t *mock_server_down (void);
 
@@ -69,11 +69,6 @@ const char *mock_server_get_host_and_port (mock_server_t *server);
 
 uint16_t mock_server_get_port (mock_server_t *server);
 
-bool mock_server_get_verbose (mock_server_t *server);
-
-void mock_server_set_verbose (mock_server_t *server,
-                              bool verbose);
-
 int64_t mock_server_get_request_timeout_msec (mock_server_t *server);
 
 void mock_server_set_request_timeout_msec (mock_server_t *server,
@@ -85,6 +80,8 @@ void mock_server_set_rand_delay (mock_server_t *server,
                                  bool rand_delay);
 
 double mock_server_get_uptime_sec (mock_server_t *server);
+
+request_t *mock_server_receives_request (mock_server_t *server);
 
 request_t *mock_server_receives_command (mock_server_t *server,
                                          const char *database_name,
@@ -101,7 +98,7 @@ request_t *mock_server_receives_query (mock_server_t *server,
                                        const char *ns,
                                        mongoc_query_flags_t flags,
                                        uint32_t skip,
-                                       uint32_t n_return,
+                                       int32_t n_return,
                                        const char *query_json,
                                        const char *fields_json);
 
@@ -128,7 +125,7 @@ request_t * mock_server_receives_delete (mock_server_t *server,
 
 request_t *mock_server_receives_getmore (mock_server_t *server,
                                          const char *ns,
-                                         uint32_t n_return,
+                                         int32_t n_return,
                                          int64_t cursor_id);
 
 request_t *mock_server_receives_kill_cursors (mock_server_t *server,
@@ -166,4 +163,4 @@ void mock_server_reply_multi (request_t           *request,
 
 void mock_server_destroy (mock_server_t *server);
 
-#endif //MOCK_SERVER_H
+#endif  /* MOCK_SERVER_H */

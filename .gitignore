@@ -1,3 +1,4 @@
+test.log
 *~
 *.a
 aclocal.m4
@@ -9,6 +10,8 @@ bulk2
 bulk3
 bulk4
 bulk5
+bulk6
+bulk-collation
 ChangeLog
 cluster1
 CMakeCache.txt
@@ -23,10 +26,14 @@ depcomp
 .dirstamp
 .DS_Store
 echo-server
+example-command-monitoring
+example-command-with-opts
 example-client
+example-pool
 example-scram
 example-gridfs
 example-matcher
+example-sdam-monitoring
 filter-bsondump
 find-and-modify
 fam
@@ -62,7 +69,7 @@ stamp-h1
 tags
 test-libmongoc
 test-load
-test.log
+test-results.json
 test-mock-server
 test-mongoc-array
 test-mongoc-buffer
@@ -90,5 +97,3 @@ test-replica-set-ssl
 test-secondary
 test-sharded-cluster
 test-x509
-src/libbson
-
