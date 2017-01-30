@@ -25,6 +25,7 @@
 #include "mongoc-rpc-private.h"
 #include "mongoc-stream-private.h"
 #include "mongoc-server-description-private.h"
+#include "mongoc-log.h"
 #include "utlist.h"
 
 #ifdef MONGOC_ENABLE_SSL
@@ -65,30 +66,21 @@ mongoc_async_cmd_tls_setup (mongoc_stream_t *stream,
 {
    mongoc_stream_t *tls_stream;
    const char *host = (const char *)ctx;
+   int retry_events = 0;
 
    for (tls_stream = stream; tls_stream->type != MONGOC_STREAM_TLS;
         tls_stream = mongoc_stream_get_base_stream (tls_stream)) {
    }
 
-   if (mongoc_stream_tls_do_handshake (tls_stream, timeout_msec)) {
-      if (mongoc_stream_tls_check_cert (tls_stream, host)) {
-         return 1;
-      } else {
-         bson_set_error (error, MONGOC_ERROR_STREAM,
-                         MONGOC_ERROR_STREAM_SOCKET,
-                         "Failed to verify TLS cert.");
-         return -1;
-      }
-   } else if (mongoc_stream_tls_should_retry (tls_stream)) {
-      *events = mongoc_stream_tls_should_read (tls_stream) ? POLLIN : POLLOUT;
-   } else {
-      bson_set_error (error, MONGOC_ERROR_STREAM,
-                      MONGOC_ERROR_STREAM_SOCKET,
-                      "Failed to initialize TLS state.");
-      return -1;
+   if (mongoc_stream_tls_handshake (tls_stream, host, timeout_msec, &retry_events, error)) {
+      return 1;
    }
 
-   return 0;
+   if (retry_events) {
+      *events = retry_events;
+      return 0;
+   }
+   return -1;
 }
 #endif
 
@@ -96,7 +88,7 @@ bool
 mongoc_async_cmd_run (mongoc_async_cmd_t *acmd)
 {
    mongoc_async_cmd_result_t result;
-   int64_t rtt;
+   int64_t rtt_msec;
    _mongoc_async_cmd_phase_t phase_callback;
 
    phase_callback = gMongocCMDPhases[acmd->state];
@@ -110,13 +102,13 @@ mongoc_async_cmd_run (mongoc_async_cmd_t *acmd)
       return true;
    }
 
-   rtt = bson_get_monotonic_time () - acmd->start_time;
+   rtt_msec = (bson_get_monotonic_time () - acmd->start_time) / 1000;
 
    if (result == MONGOC_ASYNC_CMD_SUCCESS) {
-      acmd->cb (result, &acmd->reply, rtt, acmd->data, &acmd->error);
+      acmd->cb (result, &acmd->reply, rtt_msec, acmd->data, &acmd->error);
    } else {
       /* we're in ERROR, TIMEOUT, or CANCELED */
-      acmd->cb (result, NULL, rtt, acmd->data, &acmd->error);
+      acmd->cb (result, NULL, rtt_msec, acmd->data, &acmd->error);
    }
 
    mongoc_async_cmd_destroy (acmd);
@@ -167,11 +159,9 @@ mongoc_async_cmd_new (mongoc_async_t           *async,
                       const bson_t             *cmd,
                       mongoc_async_cmd_cb_t     cb,
                       void                     *cb_data,
-                      int32_t                   timeout_msec)
+                      int64_t                   timeout_msec)
 {
    mongoc_async_cmd_t *acmd;
-   mongoc_async_cmd_t *tmp;
-   bool found = false;
 
    BSON_ASSERT (cmd);
    BSON_ASSERT (dbname);
@@ -179,7 +169,7 @@ mongoc_async_cmd_new (mongoc_async_t           *async,
 
    acmd = (mongoc_async_cmd_t *)bson_malloc0 (sizeof (*acmd));
    acmd->async = async;
-   acmd->expire_at = bson_get_monotonic_time () + (int64_t) timeout_msec * 1000;
+   acmd->timeout_msec = timeout_msec;
    acmd->stream = stream;
    acmd->setup = setup;
    acmd->setup_ctx = setup_ctx;
@@ -194,22 +184,8 @@ mongoc_async_cmd_new (mongoc_async_t           *async,
 
    _mongoc_async_cmd_state_start (acmd);
 
-   /* slot the cmd into the right place in the expiration list */
-   {
-      async->ncmds++;
-      DL_FOREACH (async->cmds, tmp)
-      {
-         if (tmp->expire_at >= acmd->expire_at) {
-            DL_PREPEND_ELEM (async->cmds, tmp, acmd);
-            found = true;
-            break;
-         }
-      }
-
-      if (! found) {
-         DL_APPEND (async->cmds, acmd);
-      }
-   }
+   async->ncmds++;
+   DL_APPEND (async->cmds, acmd);
 
    return acmd;
 }
@@ -238,16 +214,12 @@ mongoc_async_cmd_destroy (mongoc_async_cmd_t *acmd)
 mongoc_async_cmd_result_t
 _mongoc_async_cmd_phase_setup (mongoc_async_cmd_t *acmd)
 {
-   int64_t now;
-   int64_t timeout_msec;
+   int retval;
 
-   now = bson_get_monotonic_time ();
-   timeout_msec = (acmd->expire_at - now) / 1000;
-
-   BSON_ASSERT (timeout_msec < INT32_MAX);
-
-   switch (acmd->setup (acmd->stream, &acmd->events, acmd->setup_ctx,
-                        (int32_t) timeout_msec, &acmd->error)) {
+   BSON_ASSERT (acmd->timeout_msec < INT32_MAX);
+   retval = acmd->setup (acmd->stream, &acmd->events, acmd->setup_ctx,
+                         (int32_t) acmd->timeout_msec, &acmd->error);
+   switch (retval) {
       case -1:
          return MONGOC_ASYNC_CMD_ERROR;
          break;

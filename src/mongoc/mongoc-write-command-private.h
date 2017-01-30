@@ -17,7 +17,7 @@
 #ifndef MONGOC_WRITE_COMMAND_PRIVATE_H
 #define MONGOC_WRITE_COMMAND_PRIVATE_H
 
-#if !defined (MONGOC_I_AM_A_DRIVER) && !defined (MONGOC_COMPILATION)
+#if !defined (MONGOC_COMPILATION)
 #error "Only <mongoc.h> can be included directly."
 #endif
 
@@ -48,20 +48,18 @@ struct _mongoc_bulk_write_flags_t
 {
    bool ordered;
    mongoc_write_bypass_document_validation_t bypass_document_validation;
+   bool has_collation;
 };
 
 
 typedef struct
 {
    int      type;
-   uint32_t hint;
    bson_t  *documents;
    uint32_t n_documents;
    mongoc_bulk_write_flags_t flags;
+   int64_t operation_id;
    union {
-      struct {
-         bool multi;
-      } delete_;
       struct {
          bool allow_bulk_op_insert;
       } insert;
@@ -85,7 +83,8 @@ typedef struct
    /* like [{"code": 64, "errmsg": "duplicate"}, ...] */
    uint32_t     n_writeConcernErrors;
    bson_t       writeConcernErrors;
-   bool         failed;
+   bool         failed; /* The command failed */
+   bool         must_stop; /* The stream may have been disonnected */
    bson_error_t error;
    uint32_t     upsert_append_count;
 } mongoc_write_result_t;
@@ -95,27 +94,29 @@ void _mongoc_write_command_destroy     (mongoc_write_command_t        *command);
 void _mongoc_write_command_init_insert (mongoc_write_command_t        *command,
                                         const bson_t                  *document,
                                         mongoc_bulk_write_flags_t      flags,
+                                        int64_t                        operation_id,
                                         bool                           allow_bulk_op_insert);
 void _mongoc_write_command_init_delete (mongoc_write_command_t        *command,
                                         const bson_t                  *selectors,
-                                        bool                           multi,
-                                        mongoc_bulk_write_flags_t      flags);
+                                        const bson_t                  *opts,
+                                        mongoc_bulk_write_flags_t      flags,
+                                        int64_t                        operation_id);
 void _mongoc_write_command_init_update (mongoc_write_command_t        *command,
                                         const bson_t                  *selector,
                                         const bson_t                  *update,
-                                        bool                           upsert,
-                                        bool                           multi,
-                                        mongoc_bulk_write_flags_t      flags);
+                                        const bson_t                  *opts,
+                                        mongoc_bulk_write_flags_t      flags,
+                                        int64_t                        operation_id);
 void _mongoc_write_command_insert_append (mongoc_write_command_t      *command,
                                           const bson_t                *document);
 void _mongoc_write_command_update_append (mongoc_write_command_t      *command,
                                           const bson_t                *selector,
                                           const bson_t                *update,
-                                          bool                         upsert,
-                                          bool                         multi);
+                                          const bson_t                *opts);
 
 void _mongoc_write_command_delete_append (mongoc_write_command_t *command,
-                                          const bson_t           *selector);
+                                          const bson_t           *selector,
+                                          const bson_t           *opts);
 
 void _mongoc_write_command_execute     (mongoc_write_command_t        *command,
                                         mongoc_client_t               *client,
@@ -133,9 +134,13 @@ void _mongoc_write_result_merge        (mongoc_write_result_t         *result,
 void _mongoc_write_result_merge_legacy (mongoc_write_result_t         *result,
                                         mongoc_write_command_t        *command,
                                         const bson_t                  *reply,
+                                        int32_t                        error_api_version,
                                         mongoc_error_code_t            default_code,
                                         uint32_t                       offset);
 bool _mongoc_write_result_complete     (mongoc_write_result_t         *result,
+                                        int32_t                        error_api_version,
+                                        const mongoc_write_concern_t  *wc,
+                                        mongoc_error_domain_t          err_domain_override,
                                         bson_t                        *reply,
                                         bson_error_t                  *error);
 void _mongoc_write_result_destroy      (mongoc_write_result_t         *result);

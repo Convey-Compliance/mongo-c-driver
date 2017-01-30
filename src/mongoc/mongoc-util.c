@@ -19,6 +19,7 @@
 
 #include "mongoc-util-private.h"
 #include "mongoc-client.h"
+#include "mongoc-trace-private.h"
 
 
 char *
@@ -67,6 +68,9 @@ const char *
 _mongoc_get_command_name (const bson_t *command)
 {
    bson_iter_t iter;
+   const char *name;
+   bson_iter_t child;
+   const char *wrapper_name = NULL;
 
    BSON_ASSERT (command);
 
@@ -75,7 +79,28 @@ _mongoc_get_command_name (const bson_t *command)
       return NULL;
    }
 
-   return bson_iter_key (&iter);
+   name = bson_iter_key (&iter);
+
+   /* wrapped in "$query" or "query"?
+    *
+    *   {$query: {count: "collection"}, $readPreference: {...}}
+    */
+   if (name[0] == '$') {
+      wrapper_name = "$query";
+   } else if (!strcmp (name, "query")) {
+      wrapper_name = "query";
+   }
+
+   if (wrapper_name &&
+       bson_iter_init_find (&iter, command, wrapper_name) &&
+       BSON_ITER_HOLDS_DOCUMENT (&iter) &&
+       bson_iter_recurse (&iter, &child) &&
+       bson_iter_next (&child)) {
+
+      name = bson_iter_key (&child);
+   }
+
+   return name;
 }
 
 
@@ -104,4 +129,50 @@ _mongoc_bson_destroy_if_set (bson_t *bson)
    if (bson) {
       bson_destroy (bson);
    }
+}
+
+size_t
+_mongoc_strlen_or_zero (const char *s)
+{
+   return s ? strlen (s) : 0;
+}
+
+
+/* Get "serverId" from opts. Sets *server_id to the serverId from "opts" or 0
+ * if absent. On error, fills out *error with domain and code and return false.
+ */
+bool
+_mongoc_get_server_id_from_opts (const bson_t          *opts,
+                                 mongoc_error_domain_t  domain,
+                                 mongoc_error_code_t    code,
+                                 uint32_t              *server_id,
+                                 bson_error_t          *error)
+{
+   bson_iter_t iter;
+
+   ENTRY;
+
+   BSON_ASSERT (server_id);
+
+   *server_id = 0;
+
+   if (!opts || !bson_iter_init_find (&iter, opts, "serverId")) {
+      RETURN (true);
+   }
+
+   if (!BSON_ITER_HOLDS_INT32 (&iter) && !BSON_ITER_HOLDS_INT64 (&iter)) {
+      bson_set_error (error, domain, code,
+                      "The serverId option must be an integer");
+      RETURN (false);
+   }
+
+   if (bson_iter_as_int64 (&iter) <= 0) {
+      bson_set_error (error, domain, code,
+                      "The serverId option must be >= 1");
+      RETURN (false);
+   }
+
+   *server_id = (uint32_t) bson_iter_as_int64 (&iter);
+
+   RETURN (true);
 }

@@ -38,10 +38,12 @@ struct _mongoc_ssl_opt_t
    const char *ca_dir;
    const char *crl_file;
    bool        weak_cert_validation;
-   void       *padding [8];
+   bool        allow_invalid_hostname;
+   void       *padding [7];
 };
 
 
+BSON_API
 const mongoc_ssl_opt_t *mongoc_ssl_opt_get_default (void) BSON_GNUC_CONST;
 
 

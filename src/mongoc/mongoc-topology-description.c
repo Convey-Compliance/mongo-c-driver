@@ -17,9 +17,11 @@
 #include "mongoc-array-private.h"
 #include "mongoc-error.h"
 #include "mongoc-server-description-private.h"
-#include "mongoc-topology-description-private.h"
-#include "mongoc-trace.h"
+#include "mongoc-topology-description-apm-private.h"
+#include "mongoc-trace-private.h"
 #include "mongoc-util-private.h"
+#include "mongoc-read-prefs-private.h"
+#include "mongoc-set-private.h"
 
 
 static void
@@ -45,8 +47,9 @@ _mongoc_topology_server_dtor (void *server_,
  *--------------------------------------------------------------------------
  */
 void
-mongoc_topology_description_init (mongoc_topology_description_t     *description,
-                                  mongoc_topology_description_type_t type)
+mongoc_topology_description_init (mongoc_topology_description_t      *description,
+                                  mongoc_topology_description_type_t  type,
+                                  int64_t                             heartbeat_msec)
 {
    ENTRY;
 
@@ -57,13 +60,77 @@ mongoc_topology_description_init (mongoc_topology_description_t     *description
 
    memset (description, 0, sizeof (*description));
 
+   bson_oid_init (&description->topology_id, NULL);
+   description->opened = false;
    description->type = type;
+   description->heartbeat_msec = heartbeat_msec;
    description->servers = mongoc_set_new(8, _mongoc_topology_server_dtor, NULL);
    description->set_name = NULL;
    description->max_set_version = MONGOC_NO_SET_VERSION;
    description->compatible = true;
    description->compatibility_error = NULL;
    description->stale = true;
+   description->rand_seed = (unsigned int) bson_get_monotonic_time ();
+
+   EXIT;
+}
+
+/*
+ *--------------------------------------------------------------------------
+ *
+ * _mongoc_topology_description_copy_to --
+ *
+ *       Deep-copy @src to an uninitialized topology description @dst.
+ *       @dst must not already point to any allocated resources. Clean
+ *       up with mongoc_topology_description_destroy.
+ *
+ *       WARNING: @dst's rand_seed is not initialized.
+ *
+ * Returns:
+ *       None.
+ *
+ * Side effects:
+ *       None.
+ *
+ *--------------------------------------------------------------------------
+ */
+void
+_mongoc_topology_description_copy_to (const mongoc_topology_description_t *src,
+                                      mongoc_topology_description_t *dst)
+{
+   size_t nitems;
+   size_t i;
+   mongoc_server_description_t *sd;
+   uint32_t id;
+
+   ENTRY;
+
+   BSON_ASSERT (src);
+   BSON_ASSERT (dst);
+
+   bson_oid_copy (&src->topology_id, &dst->topology_id);
+   dst->opened = src->opened;
+   dst->type = src->type;
+   dst->heartbeat_msec = src->heartbeat_msec;
+
+   nitems = bson_next_power_of_two (src->servers->items_len);
+   dst->servers = mongoc_set_new (nitems, _mongoc_topology_server_dtor, NULL);
+   for (i = 0; i < src->servers->items_len; i++) {
+      sd = mongoc_set_get_item_and_id (src->servers, (int) i, &id);
+      mongoc_set_add (dst->servers, id,
+                      mongoc_server_description_new_copy (sd));
+   }
+
+   dst->set_name = bson_strdup (src->set_name);
+   dst->max_set_version = src->max_set_version;
+   dst->compatible = src->compatible;
+   dst->compatibility_error = bson_strdup (src->compatibility_error);
+   dst->max_server_id = src->max_server_id;
+   dst->stale = src->stale;
+   memcpy (&dst->apm_callbacks, &src->apm_callbacks,
+           sizeof (mongoc_apm_callbacks_t));
+
+   dst->apm_context = src->apm_context;
 
    EXIT;
 }
@@ -227,7 +294,6 @@ _mongoc_topology_description_server_is_candidate (
       switch ((int)read_mode) {
       case MONGOC_READ_PRIMARY:
          switch ((int)desc_type) {
-         case MONGOC_SERVER_POSSIBLE_PRIMARY:
          case MONGOC_SERVER_RS_PRIMARY:
             return true;
          default:
@@ -242,7 +308,6 @@ _mongoc_topology_description_server_is_candidate (
          }
       default:
          switch ((int)desc_type) {
-         case MONGOC_SERVER_POSSIBLE_PRIMARY:
          case MONGOC_SERVER_RS_PRIMARY:
          case MONGOC_SERVER_RS_SECONDARY:
             return true;
@@ -280,13 +345,16 @@ _mongoc_replica_set_read_suitable_cb (void *item,
    mongoc_server_description_t *server = (mongoc_server_description_t *)item;
    mongoc_suitable_data_t *data = (mongoc_suitable_data_t *)ctx;
 
+   /* primary's used in staleness calculation, even with mode SECONDARY */
+   if (server->type == MONGOC_SERVER_RS_PRIMARY) {
+      data->primary = server;
+   }
+
    if (_mongoc_topology_description_server_is_candidate (server->type,
                                                          data->read_mode,
                                                          data->topology_type)) {
 
       if (server->type == MONGOC_SERVER_RS_PRIMARY) {
-         data->primary = server;
-
          if (data->read_mode == MONGOC_READ_PRIMARY ||
              data->read_mode == MONGOC_READ_PRIMARY_PREFERRED) {
             /* we want a primary and we have one, done! */
@@ -300,9 +368,38 @@ _mongoc_replica_set_read_suitable_cb (void *item,
 
       /* add to our candidates */
       data->candidates[data->candidates_len++] = server;
+   } else {
+      TRACE ("Rejected [%s] [%s] for mode [%s]",
+             mongoc_server_description_type (server),
+             server->host.host_and_port,
+             _mongoc_read_mode_as_str (data->read_mode));
    }
+
    return true;
 }
+
+
+/* if any mongos are candidates, add them to the candidates array */
+static void
+_mongoc_try_mode_secondary (mongoc_array_t                *set, /* OUT */
+                            mongoc_topology_description_t *topology,
+                            const mongoc_read_prefs_t     *read_pref,
+                            size_t                         local_threshold_ms)
+{
+   mongoc_read_prefs_t *secondary;
+
+   secondary = mongoc_read_prefs_copy (read_pref);
+   mongoc_read_prefs_set_mode (secondary, MONGOC_READ_SECONDARY);
+
+   mongoc_topology_description_suitable_servers (set,
+                                                 MONGOC_SS_READ,
+                                                 topology,
+                                                 secondary,
+                                                 local_threshold_ms);
+
+   mongoc_read_prefs_destroy (secondary);
+}
+
 
 /* if any mongos are candidates, add them to the candidates array */
 static bool
@@ -320,19 +417,149 @@ _mongoc_find_suitable_mongos_cb (void *item,
    return true;
 }
 
+
 /*
  *-------------------------------------------------------------------------
  *
- * mongoc_topology_description_suitable_servers --
+ * mongoc_topology_description_lowest_max_wire_version --
  *
- *       Return an array of suitable server descriptions for this
- *       operation and read preference.
+ *       The topology's max wire version.
  *
  *       NOTE: this method should only be called while holding the mutex on
  *       the owning topology object.
  *
  * Returns:
- *       Array of server descriptions, or NULL upon failure.
+ *       The minimum of all known servers' max wire versions, or INT32_MAX
+ *       if there are no known servers.
+ *
+ * Side effects:
+ *       None.
+ *
+ *-------------------------------------------------------------------------
+ */
+int32_t
+mongoc_topology_description_lowest_max_wire_version (const mongoc_topology_description_t *td)
+{
+   int i;
+   int32_t ret = INT32_MAX;
+   mongoc_server_description_t *sd;
+
+   for (i = 0; (size_t) i < td->servers->items_len; i++) {
+      sd = (mongoc_server_description_t *) mongoc_set_get_item (td->servers, i);
+
+      if (sd->type != MONGOC_SERVER_UNKNOWN && sd->max_wire_version < ret) {
+         ret = sd->max_wire_version;
+      }
+   }
+
+   return ret;
+}
+
+
+/*
+ *-------------------------------------------------------------------------
+ *
+ * mongoc_topology_description_all_sds_have_write_date --
+ *
+ *       Whether the primary and all secondaries' server descriptions have
+ *       last_write_date_ms.
+ *
+ * Side effects:
+ *       None.
+ *
+ *-------------------------------------------------------------------------
+ */
+bool
+mongoc_topology_description_all_sds_have_write_date (const mongoc_topology_description_t *td)
+{
+   int i;
+   mongoc_server_description_t *sd;
+
+   for (i = 0; (size_t) i < td->servers->items_len; i++) {
+      sd = (mongoc_server_description_t *) mongoc_set_get_item (td->servers, i);
+
+      if (sd->last_write_date_ms <= 0 &&
+          (sd->type == MONGOC_SERVER_RS_PRIMARY ||
+           sd->type == MONGOC_SERVER_RS_SECONDARY)) {
+         return false;
+      }
+   }
+
+   return true;
+}
+
+/*
+ *-------------------------------------------------------------------------
+ *
+ * _mongoc_topology_description_validate_max_staleness --
+ *
+ *       If the provided "maxStalenessSeconds" component of the read
+ *       preference is not valid for this topology, fill out @error and
+ *       return false.
+ *
+ * Side effects:
+ *       None.
+ *
+ *-------------------------------------------------------------------------
+ */
+bool
+_mongoc_topology_description_validate_max_staleness (
+   const mongoc_topology_description_t *td,
+   int64_t                              max_staleness_seconds,
+   bson_error_t                        *error)
+{
+   mongoc_topology_description_type_t td_type;
+
+   /* Server Selection Spec: A driver MUST raise an error if the TopologyType
+    * is ReplicaSetWithPrimary or ReplicaSetNoPrimary and either of these
+    * conditions is false:
+    *
+    * maxStalenessSeconds * 1000 >= heartbeatFrequencyMS + idleWritePeriodMS
+    * maxStalenessSeconds >= smallestMaxStalenessSeconds
+    */
+
+   td_type = td->type;
+
+   if (td_type != MONGOC_TOPOLOGY_RS_WITH_PRIMARY &&
+       td_type != MONGOC_TOPOLOGY_RS_NO_PRIMARY) {
+      return true;
+   }
+
+   if (max_staleness_seconds * 1000 <
+      td->heartbeat_msec + MONGOC_IDLE_WRITE_PERIOD_MS) {
+      bson_set_error (error, MONGOC_ERROR_COMMAND,
+                      MONGOC_ERROR_COMMAND_INVALID_ARG,
+                      "maxStalenessSeconds is set to %" PRId64
+                      ", it must be at least heartbeatFrequencyMS (%" PRId64
+                      ") + server's idle write period (%d seconds)",
+                      max_staleness_seconds, td->heartbeat_msec,
+                      MONGOC_IDLE_WRITE_PERIOD_MS / 1000);
+      return false;
+   }
+
+   if (max_staleness_seconds < MONGOC_SMALLEST_MAX_STALENESS_SECONDS) {
+      bson_set_error (error, MONGOC_ERROR_COMMAND,
+                      MONGOC_ERROR_COMMAND_INVALID_ARG,
+                      "maxStalenessSeconds is set to %" PRId64
+                      ", it must be at least %d seconds", max_staleness_seconds,
+                      MONGOC_SMALLEST_MAX_STALENESS_SECONDS);
+      return false;
+   }
+
+   return true;
+}
+
+
+/*
+ *-------------------------------------------------------------------------
+ *
+ * mongoc_topology_description_suitable_servers --
+ *
+ *       Fill out an array of servers matching the read preference and
+ *       localThresholdMS.
+ *
+ *       NOTE: this method should only be called while holding the mutex on
+ *       the owning topology object.
  *
  * Side effects:
  *       None.
@@ -341,12 +568,11 @@ _mongoc_find_suitable_mongos_cb (void *item,
  */
 
 void
-mongoc_topology_description_suitable_servers (
-   mongoc_array_t                *set, /* OUT */
-   mongoc_ss_optype_t             optype,
-   mongoc_topology_description_t *topology,
-   const mongoc_read_prefs_t     *read_pref,
-   size_t                         local_threshold_ms)
+mongoc_topology_description_suitable_servers (mongoc_array_t                *set, /* OUT */
+                                              mongoc_ss_optype_t             optype,
+                                              mongoc_topology_description_t *topology,
+                                              const mongoc_read_prefs_t     *read_pref,
+                                              size_t                         local_threshold_ms)
 {
    mongoc_suitable_data_t data;
    mongoc_server_description_t **candidates;
@@ -370,6 +596,10 @@ mongoc_topology_description_suitable_servers (
       server = (mongoc_server_description_t *)mongoc_set_get_item (topology->servers, 0);
       if (_mongoc_topology_description_server_is_candidate (server->type, read_mode, topology->type)) {
          _mongoc_array_append_val (set, server);
+      } else {
+         TRACE ("Rejected [%s] [%s] for read mode [%s] with topology type Single",
+                mongoc_server_description_type (server),
+                server->host.host_and_port, _mongoc_read_mode_as_str (read_mode));
       }
       goto DONE;
    }
@@ -383,41 +613,62 @@ mongoc_topology_description_suitable_servers (
 
          mongoc_set_for_each(topology->servers, _mongoc_replica_set_read_suitable_cb, &data);
 
-         /* if we have a primary, it's a candidate, for some read modes we are done */
-         if (read_mode == MONGOC_READ_PRIMARY || read_mode == MONGOC_READ_PRIMARY_PREFERRED) {
+         if (read_mode == MONGOC_READ_PRIMARY) {
             if (data.primary) {
                _mongoc_array_append_val (set, data.primary);
-               goto DONE;
             }
+
+            goto DONE;
          }
 
-         if (! mongoc_server_description_filter_eligible (data.candidates, data.candidates_len, read_pref)) {
-            if (read_mode == MONGOC_READ_NEAREST) {
-               goto DONE;
-            } else {
-               data.has_secondary = false;
-            }
-         }
-
-         if (data.has_secondary &&
-             (read_mode == MONGOC_READ_SECONDARY || read_mode == MONGOC_READ_SECONDARY_PREFERRED)) {
-            /* secondary or secondary preferred and we have one. */
-
-            for (i = 0; i < data.candidates_len; i++) {
-               if (candidates[i] && candidates[i]->type == MONGOC_SERVER_RS_PRIMARY) {
-                  candidates[i] = NULL;
-               }
-            }
-         } else if (read_mode == MONGOC_READ_SECONDARY_PREFERRED && data.primary) {
-            /* secondary preferred, but only the one primary is a candidate */
+         if (read_mode == MONGOC_READ_PRIMARY_PREFERRED && data.primary) {
             _mongoc_array_append_val (set, data.primary);
             goto DONE;
          }
 
+         if (read_mode == MONGOC_READ_SECONDARY_PREFERRED) {
+            /* try read_mode SECONDARY */
+            _mongoc_try_mode_secondary (set,
+                                        topology,
+                                        read_pref,
+                                        local_threshold_ms);
+
+            /* otherwise fall back to primary */
+            if (!set->len && data.primary) {
+               _mongoc_array_append_val (set, data.primary);
+            }
+
+            goto DONE;
+         }
+
+         if (read_mode == MONGOC_READ_SECONDARY) {
+            for (i = 0; i < data.candidates_len; i++) {
+               if (candidates[i] &&
+                   candidates[i]->type != MONGOC_SERVER_RS_SECONDARY) {
+                  TRACE ("Rejected [%s] [%s] for mode [%s] with RS topology",
+                         mongoc_server_description_type (candidates[i]),
+                         candidates[i]->host.host_and_port,
+                         _mongoc_read_mode_as_str (read_mode));
+                  candidates[i] = NULL;
+               }
+            }
+         }
+
+         /* mode is SECONDARY or NEAREST, filter by staleness and tags */
+         mongoc_server_description_filter_stale (data.candidates,
+                                                 data.candidates_len,
+                                                 data.primary,
+                                                 topology->heartbeat_msec,
+                                                 read_pref);
+
+         mongoc_server_description_filter_tags (data.candidates,
+                                                data.candidates_len,
+                                                read_pref);
       } else if (topology->type == MONGOC_TOPOLOGY_RS_WITH_PRIMARY) {
          /* includes optype == MONGOC_SS_WRITE as the exclusion of the above if */
-         mongoc_set_for_each(topology->servers, _mongoc_topology_description_has_primary_cb,
-                             &data.primary);
+         mongoc_set_for_each (topology->servers,
+                              _mongoc_topology_description_has_primary_cb,
+                              &data.primary);
          if (data.primary) {
             _mongoc_array_append_val (set, data.primary);
             goto DONE;
@@ -439,13 +690,15 @@ mongoc_topology_description_suitable_servers (
     * Find the nearest, then select within the window */
 
    for (i = 0; i < data.candidates_len; i++) {
-      if (candidates[i] && (nearest == -1 || nearest > candidates[i]->round_trip_time)) {
-         nearest = candidates[i]->round_trip_time;
+      if (candidates[i] &&
+          (nearest == -1 || nearest > candidates[i]->round_trip_time_msec)) {
+         nearest = candidates[i]->round_trip_time_msec;
       }
    }
 
    for (i = 0; i < data.candidates_len; i++) {
-      if (candidates[i] && (candidates[i]->round_trip_time <= nearest + local_threshold_ms)) {
+      if (candidates[i] &&
+          (candidates[i]->round_trip_time_msec <= nearest + local_threshold_ms)) {
          _mongoc_array_append_val (set, candidates[i]);
       }
    }
@@ -489,13 +742,14 @@ mongoc_topology_description_select (mongoc_topology_description_t *topology,
 {
    mongoc_array_t suitable_servers;
    mongoc_server_description_t *sd = NULL;
+   int rand_n;
 
    ENTRY;
 
    if (!topology->compatible) {
-      /* TODO, should we return an error object here,
-         or just treat as a case where there are no suitable servers? */
-      RETURN(NULL);
+      /* TODO: check this in mongoc_topology_compatible (), CDRIVER-689 */
+      TRACE ("%s", "Incompatible topology");
+      RETURN (NULL);
    }
 
    if (topology->type == MONGOC_TOPOLOGY_SINGLE) {
@@ -504,22 +758,31 @@ mongoc_topology_description_select (mongoc_topology_description_t *topology,
       if (sd->has_is_master) {
          RETURN(sd);
       } else {
-         RETURN(NULL);
+         TRACE ("Topology type single, [%s] is down", sd->host.host_and_port);
+         RETURN (NULL);
       }
    }
 
    _mongoc_array_init(&suitable_servers, sizeof(mongoc_server_description_t *));
 
-   mongoc_topology_description_suitable_servers(&suitable_servers, optype,
-                                                 topology, read_pref, local_threshold_ms);
+   mongoc_topology_description_suitable_servers (&suitable_servers, optype,
+                                                 topology, read_pref,
+                                                 local_threshold_ms);
    if (suitable_servers.len != 0) {
+      rand_n = MONGOC_RAND_R (&topology->rand_seed);
       sd = _mongoc_array_index(&suitable_servers, mongoc_server_description_t*,
-                               rand() % suitable_servers.len);
+                               rand_n % suitable_servers.len);
    }
 
    _mongoc_array_destroy (&suitable_servers);
 
-   RETURN(sd);
+   if (sd) {
+      TRACE ("Topology type [%s], selected [%s] [%s]",
+             mongoc_topology_description_type (topology),
+             mongoc_server_description_type (sd), sd->host.host_and_port);
+   }
+
+   RETURN (sd);
 }
 
 /*
@@ -587,6 +850,7 @@ _mongoc_topology_description_remove_server (mongoc_topology_description_t *descr
    BSON_ASSERT (description);
    BSON_ASSERT (server);
 
+   _mongoc_topology_description_monitor_server_closed (description, server);
    mongoc_set_rm(description->servers, server->id);
 }
 
@@ -790,7 +1054,8 @@ _mongoc_topology_description_check_if_has_primary (mongoc_topology_description_t
  *
  *      Invalidate a server if a network error occurred while using it in
  *      another part of the client. Server description is set to type
- *      UNKNOWN and other parameters are reset to defaults.
+ *      UNKNOWN, the error is recorded, and other parameters are reset to
+ *      defaults. Pass in the reason for invalidation in @error.
  *
  *      NOTE: this method should only be called while holding the mutex on
  *      the owning topology object.
@@ -799,15 +1064,13 @@ _mongoc_topology_description_check_if_has_primary (mongoc_topology_description_t
  */
 void
 mongoc_topology_description_invalidate_server (mongoc_topology_description_t *topology,
-                                               uint32_t                       id)
+                                               uint32_t                       id,
+                                               const bson_error_t            *error /* IN */)
 {
-   mongoc_server_description_t *sd;
-   bson_error_t error;
+   BSON_ASSERT (error);
 
-   sd = mongoc_topology_description_server_by_id (topology, id, NULL);
-   mongoc_topology_description_handle_ismaster (topology, sd, NULL, 0, &error);
-
-   return;
+   /* send NULL ismaster reply */
+   mongoc_topology_description_handle_ismaster (topology, id, NULL, 0, error);
 }
 
 /*
@@ -850,6 +1113,11 @@ mongoc_topology_description_add_server (mongoc_topology_description_t *topology,
       mongoc_server_description_init(description, server, server_id);
 
       mongoc_set_add(topology->servers, server_id, description);
+
+      /* if we're in topology_new then no callbacks are registered and this is
+       * a no-op. later, if we discover a new RS member this sends an event. */
+      _mongoc_topology_description_monitor_server_opening (topology,
+                                                           description);
    }
 
    if (id) {
@@ -1010,6 +1278,7 @@ _mongoc_topology_description_update_rs_from_primary (mongoc_topology_description
                                                      mongoc_server_description_t   *server)
 {
    mongoc_primary_and_topology_t data;
+   bson_error_t error;
 
    BSON_ASSERT (topology);
    BSON_ASSERT (server);
@@ -1040,8 +1309,11 @@ _mongoc_topology_description_update_rs_from_primary (mongoc_topology_description
        * between the old and new primary during a split-brain period."
        */
       if (_mongoc_topology_description_later_election (topology, server)) {
-         /* stale primary */
-         mongoc_topology_description_invalidate_server (topology, server->id);
+         bson_set_error (&error,
+                         MONGOC_ERROR_STREAM, MONGOC_ERROR_STREAM_CONNECT,
+                         "member's setVersion or electionId is stale");
+         mongoc_topology_description_invalidate_server (topology, server->id,
+                                                        &error);
          _update_rs_type (topology);
          return;
       }
@@ -1358,13 +1630,56 @@ gSDAMTransitionTable[MONGOC_SERVER_DESCRIPTION_TYPES][MONGOC_TOPOLOGY_DESCRIPTIO
    }
 };
 
+#ifdef MONGOC_TRACE
+/*
+ *--------------------------------------------------------------------------
+ *
+ * _mongoc_topology_description_type --
+ *
+ *      Get this topology's type, one of the types defined in the Server
+ *      Discovery And Monitoring Spec.
+ *
+ *      NOTE: this method should only be called while holding the mutex on
+ *      the owning topology object.
+ *
+ * Returns:
+ *       A string.
+ *
+ * Side effects:
+ *       None.
+ *
+ *--------------------------------------------------------------------------
+ */
+static const char *
+_mongoc_topology_description_type (mongoc_topology_description_t *topology)
+{
+   switch (topology->type) {
+   case MONGOC_TOPOLOGY_UNKNOWN:
+      return "Unknown";
+   case MONGOC_TOPOLOGY_SHARDED:
+      return "Sharded";
+   case MONGOC_TOPOLOGY_RS_NO_PRIMARY:
+      return "RSNoPrimary";
+   case MONGOC_TOPOLOGY_RS_WITH_PRIMARY:
+      return "RSWithPrimary";
+   case MONGOC_TOPOLOGY_SINGLE:
+      return "Single";
+   case MONGOC_TOPOLOGY_DESCRIPTION_TYPES:
+   default:
+      MONGOC_ERROR ("Invalid mongoc_topology_description_type_t type");
+      return "Invalid";
+   }
+}
+#endif
+
 /*
  *--------------------------------------------------------------------------
  *
  * mongoc_topology_description_handle_ismaster --
  *
  *      Handle an ismaster. This is called by the background SDAM process,
- *      and by client when invalidating servers.
+ *      and by client when invalidating servers. If there was an error
+ *      calling ismaster, pass it in as @error.
  *
  *      NOTE: this method should only be called while holding the mutex on
  *      the owning topology object.
@@ -1375,28 +1690,185 @@ gSDAMTransitionTable[MONGOC_SERVER_DESCRIPTION_TYPES][MONGOC_TOPOLOGY_DESCRIPTIO
 void
 mongoc_topology_description_handle_ismaster (
    mongoc_topology_description_t *topology,
-   mongoc_server_description_t   *sd,
+   uint32_t                       server_id,
    const bson_t                  *ismaster_response,
    int64_t                        rtt_msec,
-   bson_error_t                  *error)
+   const bson_error_t            *error /* IN */)
 {
-   BSON_ASSERT (topology);
-   BSON_ASSERT (sd);
+   mongoc_topology_description_t *prev_td = NULL;
+   mongoc_server_description_t *prev_sd = NULL;
+   mongoc_server_description_t *sd;
 
-   if (!_mongoc_topology_description_has_server (topology,
-                                                 sd->connection_address,
-                                                 NULL)) {
-      MONGOC_DEBUG("Couldn't find %s in Topology Description", sd->connection_address);
-      return;
+   BSON_ASSERT (topology);
+   BSON_ASSERT (server_id != 0);
+
+   sd = mongoc_topology_description_server_by_id (topology, server_id, NULL);
+   if (!sd) {
+      return;  /* server already removed from topology */
    }
 
+   if (topology->apm_callbacks.topology_changed) {
+      prev_td = bson_malloc0 (sizeof (mongoc_topology_description_t));
+      _mongoc_topology_description_copy_to (topology, prev_td);
+   }
+
+   if (topology->apm_callbacks.server_changed) {
+      prev_sd = mongoc_server_description_new_copy (sd);
+   }
+
+   /* pass the current error in */
    mongoc_server_description_handle_ismaster (sd, ismaster_response, rtt_msec,
                                               error);
 
+   _mongoc_topology_description_monitor_server_changed (topology, prev_sd, sd);
+
    if (gSDAMTransitionTable[sd->type][topology->type]) {
-      TRACE("Transitioning to %d for %d", topology->type, sd->type);
+      TRACE("Transitioning to %s for %s", _mongoc_topology_description_type (topology), mongoc_server_description_type (sd));
       gSDAMTransitionTable[sd->type][topology->type] (topology, sd);
    } else {
-      TRACE("No transition entry to %d for %d", topology->type, sd->type);
+      TRACE("No transition entry to %s for %s", _mongoc_topology_description_type (topology), mongoc_server_description_type (sd));
    }
+
+   _mongoc_topology_description_monitor_changed (prev_td, topology);
+
+   if (prev_td) {
+      mongoc_topology_description_destroy (prev_td);
+      bson_free (prev_td);
+   }
+
+   if (prev_sd) {
+      mongoc_server_description_destroy (prev_sd);
+   }
+}
+
+/*
+ *--------------------------------------------------------------------------
+ *
+ * mongoc_topology_description_has_readable_server --
+ *
+ *      SDAM Monitoring Spec:
+ *      "Determines if the topology has a readable server available."
+ *
+ *      NOTE: this method should only be called by user code in an SDAM
+ *      Monitoring callback, while the monitoring framework holds the mutex
+ *      on the owning topology object.
+ *
+ *--------------------------------------------------------------------------
+ */
+bool
+mongoc_topology_description_has_readable_server (
+   mongoc_topology_description_t *td,
+   const mongoc_read_prefs_t     *prefs)
+{
+   /* local threshold argument doesn't matter */
+   return mongoc_topology_description_select (td, MONGOC_SS_READ,
+                                              prefs, 0) != NULL;
+}
+
+/*
+ *--------------------------------------------------------------------------
+ *
+ * mongoc_topology_description_has_writable_server --
+ *
+ *      SDAM Monitoring Spec:
+ *      "Determines if the topology has a writable server available."
+ *
+ *      NOTE: this method should only be called by user code in an SDAM
+ *      Monitoring callback, while the monitoring framework holds the mutex
+ *      on the owning topology object.
+ *
+ *--------------------------------------------------------------------------
+ */
+bool
+mongoc_topology_description_has_writable_server (
+   mongoc_topology_description_t *td)
+{
+   return mongoc_topology_description_select (td, MONGOC_SS_WRITE,
+                                              NULL, 0) != NULL;
+}
+
+/*
+ *--------------------------------------------------------------------------
+ *
+ * mongoc_topology_description_type --
+ *
+ *      Get this topology's type, one of the types defined in the Server
+ *      Discovery And Monitoring Spec.
+ *
+ *      NOTE: this method should only be called by user code in an SDAM
+ *      Monitoring callback, while the monitoring framework holds the mutex
+ *      on the owning topology object.
+ *
+ * Returns:
+ *      A string.
+ *
+ *--------------------------------------------------------------------------
+ */
+const char *
+mongoc_topology_description_type (
+   const mongoc_topology_description_t *td)
+{
+   switch (td->type) {
+   case MONGOC_TOPOLOGY_UNKNOWN:
+      return "Unknown";
+   case MONGOC_TOPOLOGY_SHARDED:
+      return "Sharded";
+   case MONGOC_TOPOLOGY_RS_NO_PRIMARY:
+      return "ReplicaSetNoPrimary";
+   case MONGOC_TOPOLOGY_RS_WITH_PRIMARY:
+      return "ReplicaSetWithPrimary";
+   case MONGOC_TOPOLOGY_SINGLE:
+      return "Single";
+   case MONGOC_TOPOLOGY_DESCRIPTION_TYPES:
+   default:
+      fprintf (stderr, "ERROR: Unknown topology type %d\n", td->type);
+      assert (0);
+   }
+
+   return NULL;
+}
+/*
+ *--------------------------------------------------------------------------
+ *
+ * mongoc_topology_description_get_servers --
+ *
+ *      Fetch an array of server descriptions for all known servers in the
+ *      topology.
+ *
+ * Returns:
+ *      An array you must free with mongoc_server_descriptions_destroy_all.
+ *
+ *--------------------------------------------------------------------------
+ */
+mongoc_server_description_t **
+mongoc_topology_description_get_servers (
+   const mongoc_topology_description_t *td,
+   size_t                              *n /* OUT */)
+{
+   size_t i;
+   mongoc_set_t *set;
+   mongoc_server_description_t **sds;
+   mongoc_server_description_t *sd;
+
+   BSON_ASSERT (td);
+   BSON_ASSERT (n);
+
+   set = td->servers;
+
+   /* enough room for all descriptions, even if some are unknown  */
+   sds = (mongoc_server_description_t **) bson_malloc0 (
+      sizeof (mongoc_server_description_t *) * set->items_len);
+
+   *n = 0;
+
+   for (i = 0; i < set->items_len; ++i) {
+      sd = (mongoc_server_description_t *) mongoc_set_get_item (set, (int) i);
+
+      if (sd->type != MONGOC_SERVER_UNKNOWN) {
+         sds[*n] = mongoc_server_description_new_copy (sd);
+         ++(*n);
+      }
+   }
+
+   return sds;
 }

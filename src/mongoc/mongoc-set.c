@@ -128,6 +128,21 @@ mongoc_set_get_item (mongoc_set_t *set,
 }
 
 
+void *
+mongoc_set_get_item_and_id (mongoc_set_t *set,
+                            int           idx,
+                            uint32_t     *id /* OUT */)
+{
+   BSON_ASSERT (set);
+   BSON_ASSERT (id);
+   BSON_ASSERT (idx < set->items_len);
+
+   *id = set->items[idx].id;
+
+   return set->items[idx].item;
+}
+
+
 void
 mongoc_set_destroy (mongoc_set_t *set)
 {
@@ -151,6 +166,11 @@ mongoc_set_for_each (mongoc_set_t            *set,
    size_t items_len;
 
    items_len = set->items_len;
+
+   /* prevent undefined behavior of memcpy(NULL) */
+   if (items_len == 0) {
+      return;
+   }
 
    old_set = (mongoc_set_item_t *)bson_malloc (sizeof (*old_set) * items_len);
    memcpy (old_set, set->items, sizeof (*old_set) * items_len);

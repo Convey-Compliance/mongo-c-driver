@@ -20,14 +20,27 @@
 #include "mongoc-config.h"
 #include "mongoc-counters-private.h"
 #include "mongoc-init.h"
+
+#include "mongoc-handshake-private.h"
+
 #ifdef MONGOC_ENABLE_SSL
 # include "mongoc-scram-private.h"
 # include "mongoc-ssl.h"
-# include "mongoc-ssl-private.h"
+# ifdef MONGOC_ENABLE_SSL_OPENSSL
+#  include "mongoc-openssl-private.h"
+#elif defined(MONGOC_ENABLE_SSL_LIBRESSL)
+#  include "tls.h"
+# endif
 #endif
 #include "mongoc-thread-private.h"
-#include "mongoc-trace.h"
+#include "mongoc-trace-private.h"
 
+
+#ifndef MONGOC_NO_AUTOMATIC_GLOBALS
+#pragma message("Configure the driver with --disable-automatic-init-and-cleanup\
+ (if using ./configure) or ENABLE_AUTOMATIC_INIT_AND_CLEANUP=OFF (with cmake).\
+ Automatic cleanup is deprecated and will be removed in version 2.0.")
+#endif
 
 #ifdef MONGOC_ENABLE_SASL
 #include <sasl/sasl.h>
@@ -69,14 +82,19 @@ mongoc_sasl_mutex_free (void *mutex)
    bson_free (mutex);
 }
 
-#endif//MONGOC_ENABLE_SASL
+#endif  /* MONGOC_ENABLE_SASL */
 
 
 static MONGOC_ONCE_FUN( _mongoc_do_init)
 {
+#ifdef MONGOC_ENABLE_SSL_OPENSSL
+   _mongoc_openssl_init ();
+#elif defined(MONGOC_ENABLE_SSL_LIBRESSL)
+   tls_init ();
+#endif
+
 #ifdef MONGOC_ENABLE_SSL
-   _mongoc_ssl_init();
-   _mongoc_scram_startup();
+   _mongoc_scram_startup ();
 #endif
 
 #ifdef MONGOC_ENABLE_SASL
@@ -91,7 +109,7 @@ static MONGOC_ONCE_FUN( _mongoc_do_init)
    sasl_client_init (NULL);
 #endif
 
-   _mongoc_counters_init();
+   _mongoc_counters_init ();
 
 #ifdef _WIN32
    {
@@ -109,6 +127,8 @@ static MONGOC_ONCE_FUN( _mongoc_do_init)
    }
 #endif
 
+   _mongoc_handshake_init ();
+
    MONGOC_ONCE_RETURN;
 }
 
@@ -121,8 +141,8 @@ mongoc_init (void)
 
 static MONGOC_ONCE_FUN( _mongoc_do_cleanup)
 {
-#ifdef MONGOC_ENABLE_SSL
-   _mongoc_ssl_cleanup();
+#ifdef MONGOC_ENABLE_SSL_OPENSSL
+   _mongoc_openssl_cleanup ();
 #endif
 
 #ifdef MONGOC_ENABLE_SASL
@@ -139,6 +159,8 @@ static MONGOC_ONCE_FUN( _mongoc_do_cleanup)
 #endif
 
    _mongoc_counters_cleanup ();
+
+   _mongoc_handshake_cleanup ();
 
    MONGOC_ONCE_RETURN;
 }
@@ -166,6 +188,7 @@ static void _mongoc_init_dtor (void) __attribute__((destructor));
 static void
 _mongoc_init_dtor (void)
 {
+   bson_mem_restore_vtable ();
    mongoc_cleanup ();
 }
 #endif

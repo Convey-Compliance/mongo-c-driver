@@ -1,4 +1,5 @@
 #include <mongoc.h>
+#include <mongoc-util-private.h>
 
 #include "mongoc-client-private.h"
 #include "utlist.h"
@@ -106,7 +107,7 @@ selects_server (mongoc_client_t *client,
    bool result;
 
    sd = mongoc_topology_select (client->topology, MONGOC_SS_READ,
-                                read_prefs, 15, &error);
+                                read_prefs, &error);
 
    if (!sd) {
       fprintf (stderr, "%s\n", error.message);
@@ -225,14 +226,14 @@ _test_topology_reconcile_rs (bool pooled)
 
 
 static void
-test_topology_reconcile_rs_single (void)
+test_topology_reconcile_rs_single (void *ctx)
 {
    _test_topology_reconcile_rs (false);
 }
 
 
 static void
-test_topology_reconcile_rs_pooled (void)
+test_topology_reconcile_rs_pooled (void *ctx)
 {
    _test_topology_reconcile_rs (true);
 }
@@ -276,7 +277,7 @@ _test_topology_reconcile_sharded (bool pooled)
 
    primary_read_prefs = mongoc_read_prefs_new (MONGOC_READ_PRIMARY);
    future = future_topology_select (client->topology, MONGOC_SS_READ,
-                                    primary_read_prefs, 15, &error);
+                                    primary_read_prefs, &error);
 
    /* mongos */
    request = mock_server_receives_ismaster (mongos);
@@ -285,6 +286,9 @@ _test_topology_reconcile_sharded (bool pooled)
       "{'ok': 1, 'ismaster': true, 'msg': 'isdbgrid'}");
 
    request_destroy (request);
+
+   /* make sure the mongos response is processed first */
+   _mongoc_usleep (1000 * 1000);
 
    /* replica set secondary - topology removes it */
    request = mock_server_receives_ismaster (secondary);
@@ -358,10 +362,10 @@ test_topology_reconcile_sharded_pooled (void)
 void
 test_topology_reconcile_install (TestSuite *suite)
 {
-   TestSuite_Add (suite, "/TOPOLOGY/reconcile/rs/pooled",
-                  test_topology_reconcile_rs_pooled);
-   TestSuite_Add (suite, "/TOPOLOGY/reconcile/rs/single",
-                  test_topology_reconcile_rs_single);
+   TestSuite_AddFull (suite, "/TOPOLOGY/reconcile/rs/pooled",
+                  test_topology_reconcile_rs_pooled, NULL, NULL, test_framework_skip_if_slow);
+   TestSuite_AddFull (suite, "/TOPOLOGY/reconcile/rs/single",
+                  test_topology_reconcile_rs_single, NULL, NULL, test_framework_skip_if_slow);
    TestSuite_Add (suite, "/TOPOLOGY/reconcile/sharded/pooled",
                   test_topology_reconcile_sharded_pooled);
    TestSuite_Add (suite, "/TOPOLOGY/reconcile/sharded/single",

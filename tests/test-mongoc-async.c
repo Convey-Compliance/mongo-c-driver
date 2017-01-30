@@ -2,7 +2,6 @@
 
 #include "mongoc-async-private.h"
 #include "mongoc-async-cmd-private.h"
-#include "mongoc-tests.h"
 #include "TestSuite.h"
 #include "mock_server/mock-server.h"
 #include "mongoc-errno-private.h"
@@ -12,11 +11,6 @@
 
 #define TIMEOUT 10000  /* milliseconds */
 #define NSERVERS 10
-
-#define TRUST_DIR "tests/trust_dir"
-#define CAFILE TRUST_DIR "/verify/mongo_root.pem"
-#define PEMFILE_NOPASS TRUST_DIR "/keys/mongodb.com.pem"
-
 
 struct result {
    int32_t  max_wire_version;
@@ -37,7 +31,7 @@ test_ismaster_helper (mongoc_async_cmd_result_t result,
    if (result != MONGOC_ASYNC_CMD_SUCCESS) {
       fprintf(stderr, "error: %s\n", error->message);
    }
-   assert(result == MONGOC_ASYNC_CMD_SUCCESS);
+   ASSERT_CMPINT (result, ==, MONGOC_ASYNC_CMD_SUCCESS);
 
    assert (bson_iter_init_find (&iter, bson, "maxWireVersion"));
    assert (BSON_ITER_HOLDS_INT32 (&iter));
@@ -76,8 +70,9 @@ test_ismaster_impl (bool with_ssl)
 
 #ifdef MONGOC_ENABLE_SSL
       if (with_ssl) {
-         sopt.pem_file = PEMFILE_NOPASS;
-         sopt.ca_file = CAFILE;
+         sopt.weak_cert_validation = true;
+         sopt.pem_file = CERT_SERVER;
+         sopt.ca_file = CERT_CA;
 
          mock_server_set_ssl_opts (servers[i], &sopt);
       }
@@ -112,10 +107,10 @@ test_ismaster_impl (bool with_ssl)
 
 #ifdef MONGOC_ENABLE_SSL
       if (with_ssl) {
-         copt.ca_file = CAFILE;
+         copt.ca_file = CERT_CA;
          copt.weak_cert_validation = 1;
 
-         sock_streams[i] = mongoc_stream_tls_new (sock_streams[i], &copt, 1);
+         sock_streams[i] = mongoc_stream_tls_new_with_hostname (sock_streams[i], NULL, &copt, 1);
          setup = mongoc_async_cmd_tls_setup;
          setup_ctx = (void *)"127.0.0.1";
       }
@@ -134,8 +129,7 @@ test_ismaster_impl (bool with_ssl)
                         TIMEOUT);
    }
 
-   while (mongoc_async_run (async, TIMEOUT)) {
-   }
+   mongoc_async_run (async, TIMEOUT);
 
    for (i = 0; i < NSERVERS; i++) {
       if (!results[i].finished) {
@@ -165,7 +159,7 @@ test_ismaster (void)
 }
 
 
-#ifdef MONGOC_ENABLE_SSL
+#ifdef MONGOC_ENABLE_SSL_OPENSSL
 static void
 test_ismaster_ssl (void)
 {
@@ -178,7 +172,7 @@ void
 test_async_install (TestSuite *suite)
 {
    TestSuite_Add (suite, "/Async/ismaster", test_ismaster);
-#ifdef MONGOC_ENABLE_SSL
+#ifdef MONGOC_ENABLE_SSL_OPENSSL
    TestSuite_Add (suite, "/Async/ismaster_ssl", test_ismaster_ssl);
 #endif
 }
